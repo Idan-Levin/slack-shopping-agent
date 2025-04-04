@@ -1,4 +1,4 @@
-# Slack Shopping Bot (LangChain Version)
+# Slack Shopping Agent (LangChain Version)
 
 This project implements a Slack bot that acts as a conversational agent to manage a shared weekly shopping list, primarily focusing on products from Target.com. It uses LangChain with an OpenAI model (GPT-4 Turbo recommended) to understand natural language requests and interact with various tools for scraping, searching, and database management.
 
