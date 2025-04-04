@@ -165,3 +165,33 @@ Ensure your Slack App is configured with:
 * **LLM Reliability:** The agent's understanding of natural language depends on the OpenAI model and the quality of the system prompt (`agent_executor.py`). Complex or ambiguous requests might be misunderstood. The prompt may need tuning based on observed behavior.
 * **API Costs:** Using the OpenAI API (especially GPT-4) for processing messages incurs costs. Monitor your OpenAI usage. Consider using GPT-3.5 Turbo for lower costs if acceptable.
 * **Security:** Keep your Slack tokens, signing secret, and OpenAI API key secure. Do not commit them directly into your code or `.env`
+
+## Local Testing
+
+To test the agent functionality locally without deploying to Slack:
+
+1. Make sure your environment is set up with all dependencies installed:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+2. Ensure your `.env` file contains the necessary API keys:
+   ```
+   OPENAI_API_KEY=sk-your-openai-api-key
+   DATABASE_PATH=./shopping_list.db
+   ```
+
+3. Run the test script:
+   ```bash
+   python test_agent.py
+   ```
+
+4. Interact with the agent directly in your console by typing queries like:
+   - "find milk"
+   - "what's on the shopping list?"
+   - "add https://www.target.com/p/some-product-url"
+   - "delete item 1"
+
+The test script creates an interactive session where you can test the agent's capabilities without needing to deploy to Slack.
