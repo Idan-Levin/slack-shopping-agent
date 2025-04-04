@@ -5,7 +5,7 @@ from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.memory import ConversationBufferMemory
+from langchain_community.memory import ConversationBufferWindowMemory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 # from langchain.callbacks import StdOutCallbackHandler # Uncomment for debugging
 
@@ -60,15 +60,16 @@ agent = create_openai_functions_agent(LLM, tools, prompt)
 # --- Memory Management ---
 # Using a simple in-memory dictionary. Production might need Redis/DB store.
 # Keyed by session_id (e.g., "slack_channel_threadts")
-conversation_memory_store: Dict[str, ConversationBufferMemory] = {}
+conversation_memory_store: Dict[str, ConversationBufferWindowMemory] = {}
 
-def get_session_history(session_id: str) -> ConversationBufferMemory:
+def get_session_history(session_id: str) -> ConversationBufferWindowMemory:
     """Retrieves or creates memory for a given session ID."""
     if session_id not in conversation_memory_store:
         logger.info(f"Creating new memory buffer for session: {session_id}")
-        conversation_memory_store[session_id] = ConversationBufferMemory(
+        conversation_memory_store[session_id] = ConversationBufferWindowMemory(
              memory_key="chat_history",
-             return_messages=True # Important for prompt structure
+             return_messages=True, # Important for prompt structure
+             k=10 # Remember last 10 message exchanges
          )
     # else: logger.debug(f"Reusing memory buffer for session: {session_id}") # Can be noisy
     return conversation_memory_store[session_id]
