@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+slack_bolt
+python-dotenv
+openai
+playwright
+beautifulsoup4
+apscheduler
+langchain
+langchain-openai
+langchain_community
+tiktoken
