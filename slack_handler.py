@@ -14,32 +14,34 @@ logger = logging.getLogger(__name__)
 
 # --- Environment Config ---
 TARGET_CHANNEL_ID: Optional[str] = os.getenv("TARGET_CHANNEL_ID")
-BOT_USER_ID: Optional[str] = None # Will be populated on startup/first event
+# Track the agent ID between requests
+AGENT_USER_ID: Optional[str] = None # Will be populated on startup/first event
 
-async def get_bot_user_id(client: AsyncWebClient):
-    """Fetches and caches the Bot User ID."""
-    global BOT_USER_ID
-    if BOT_USER_ID is None:
+async def get_agent_user_id(client: AsyncWebClient):
+    """Fetches and caches the Agent User ID."""
+    global AGENT_USER_ID
+    if AGENT_USER_ID is None:
         try:
+            # Use auth.test to get our own user ID
             auth_test = await client.auth_test()
-            BOT_USER_ID = auth_test.get("user_id")
-            if BOT_USER_ID:
-                logger.info(f"Successfully fetched Bot User ID: {BOT_USER_ID}")
+            AGENT_USER_ID = auth_test.get("user_id")
+            if AGENT_USER_ID:
+                logger.info(f"Successfully fetched Agent User ID: {AGENT_USER_ID}")
             else:
-                logger.error(f"Failed to get bot user ID from auth_test response: {auth_test}")
+                logger.error(f"Failed to get agent user ID from auth_test response: {auth_test}")
         except Exception as e:
-            logger.error(f"Exception while fetching bot user ID: {e}", exc_info=True)
-    return BOT_USER_ID
+            logger.error(f"Exception while fetching agent user ID: {e}", exc_info=True)
+    return AGENT_USER_ID
 
 def register_listeners(app: AsyncApp):
     """Registers event listeners for the Slack Bolt app."""
 
-    @app.event("app_mention") # Trigger when the bot is @mentioned
+    @app.event("app_mention") # Trigger when the agent is @mentioned
     async def handle_app_mention(body: dict, client: AsyncWebClient, say: AsyncSay, logger_from_context):
-        """Handles mentions of the bot."""
-        global BOT_USER_ID
-        if not BOT_USER_ID:
-             await get_bot_user_id(client) # Ensure BOT_USER_ID is fetched
+        """Handles mentions of the agent."""
+        global AGENT_USER_ID
+        if not AGENT_USER_ID:
+             await get_agent_user_id(client) # Ensure AGENT_USER_ID is fetched
 
         event = body.get("event", {})
         text = event.get("text", "")
@@ -52,8 +54,8 @@ def register_listeners(app: AsyncApp):
              logger_from_context.warning(f"Missing key information in app_mention event: {event}")
              return
 
-        # Remove the bot mention (e.g., "<@U123ABC> ") from the text
-        mention_pattern = r'^<@' + (BOT_USER_ID or '') + r'>\s*'
+        # Remove the agent mention (e.g., "<@U123ABC> ") from the text
+        mention_pattern = r'^<@' + (AGENT_USER_ID or '') + r'>\s*'
         processed_text = re.sub(mention_pattern, '', text).strip()
 
         if not processed_text:
@@ -129,12 +131,13 @@ def register_listeners(app: AsyncApp):
             logger.error(f"Error processing order placement: {e}", exc_info=True)
             await say(text="Sorry, an error occurred while processing the order placement.")
 
-    @app.event("message") # Also listen to messages to fetch bot ID if needed, but don't process them
-    async def handle_messages_for_startup(client: AsyncWebClient, body: dict, logger_from_context):
-        """Generic message handler primarily used to ensure bot ID is fetched on startup/first message."""
-        if not BOT_USER_ID:
-            # Avoid fetching ID for bot's own messages or subtype messages (like channel join)
+    @app.event("message") # Also listen to messages to fetch agent ID if needed, but don't process them
+    async def handle_message(client: AsyncWebClient, body: dict, logger_from_context):
+        """Generic message handler primarily used to ensure agent ID is fetched on startup/first message."""
+        if not AGENT_USER_ID:
+            # Avoid fetching ID for agent's own messages or subtype messages (like channel join)
+            # Note: We don't respond to direct messages (DMs) here - only mentions in channels
             event = body.get("event", {})
             if not event.get("bot_id") and not event.get("subtype"):
-                 await get_bot_user_id(client)
+                 await get_agent_user_id(client)
         # Don't process the message further here, only handle mentions in handle_app_mention

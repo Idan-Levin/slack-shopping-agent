@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize Bolt app
 slack_app = AsyncApp(
-    token=os.environ.get("SLACK_BOT_TOKEN"), # Use .get() for safer access
+    token=os.environ.get("SLACK_AGENT_TOKEN"), # Use .get() for safer access
     signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
 )
 
@@ -28,13 +28,13 @@ api = FastAPI()
 # Import and register listener functions AFTER initializing slack_app
 # Ensure slack_handler is imported correctly
 import slack_handler
-from slack_handler import register_listeners, get_bot_user_id
+from slack_handler import register_listeners, get_agent_user_id
 register_listeners(slack_app)
 
 # Import scheduler setup AFTER initializing slack_app and getting client
 from scheduler import setup_scheduler
 # Create Slack client instance using the token from environment variable
-slack_client = AsyncWebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
+slack_client = AsyncWebClient(token=os.environ.get("SLACK_AGENT_TOKEN"))
 scheduler = setup_scheduler(slack_client) # Pass the client instance
 
 # Create request handler for FastAPI
@@ -59,8 +59,8 @@ async def endpoint_commands(req: Request):
 
 @api.get("/")
 async def health_check():
-    # Use the imported BOT_USER_ID from slack_handler
-    return {"status": "ok", "scheduler_running": scheduler.running, "bot_id_fetched": slack_handler.BOT_USER_ID is not None}
+    # Use the imported AGENT_USER_ID from slack_handler
+    return {"status": "ok", "scheduler_running": scheduler.running, "agent_id_fetched": slack_handler.AGENT_USER_ID is not None}
 
 # --- Application Startup/Shutdown ---
 @api.on_event("startup")
@@ -75,8 +75,8 @@ async def startup_event():
         initialize_db()
     else:
         logger.info(f"Database file found at {db_path}.")
-    # Proactively fetch Bot User ID on startup
-    await get_bot_user_id(slack_client)
+    # Proactively fetch Agent User ID on startup
+    await get_agent_user_id(slack_client)
 
 
 @api.on_event("shutdown")

@@ -13,7 +13,7 @@ async def send_weekly_reminder(client: AsyncWebClient):
         logger.error("TARGET_CHANNEL_ID not set in environment variables. Cannot send reminder.")
         return
 
-    reminder_text = "Friendly reminder! 🛒 Please add any items you need to the shopping list by 5 PM today. Mention me (@ShopBotName) with your request (e.g., `@ShopBotName add https://...` or `@ShopBotName find detergent`)."
+    reminder_text = "Friendly reminder! 🛒 Please add any items you need to the shopping list by 5 PM today. Mention me (@ShopAgent) with your request (e.g., `@ShopAgent add https://...` or `@ShopAgent find detergent`)."
 
     try:
         logger.info(f"Attempting to send weekly reminder to channel {channel_id}")

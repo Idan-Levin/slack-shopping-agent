@@ -46,7 +46,7 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
             try:
                  browser = await p.chromium.launch(
                      # headless=False, # Uncomment for debugging locally to see browser
-                     args=["--disable-blink-features=AutomationControlled"] # Try to appear less like a bot
+                     args=["--disable-blink-features=AutomationControlled"] # Try to appear less like an automated agent
                  )
             except PlaywrightError as launch_error:
                 logger.error(f"Failed to launch playwright browser: {launch_error}")

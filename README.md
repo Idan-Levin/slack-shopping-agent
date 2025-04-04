@@ -1,14 +1,14 @@
 # Slack Shopping Agent (LangChain Version)
 
-This project implements a Slack bot that acts as a conversational agent to manage a shared weekly shopping list, primarily focusing on products from Target.com. It uses LangChain with an OpenAI model (GPT-4 Turbo recommended) to understand natural language requests and interact with various tools for scraping, searching, and database management.
+This project implements a Slack agent that acts as a conversational agent to manage a shared weekly shopping list, primarily focusing on products from Target.com. It uses LangChain with an OpenAI model (GPT-4 Turbo recommended) to understand natural language requests and interact with various tools for scraping, searching, and database management.
 
 ## Features
 
-* **Conversational Interaction:** Add, search, view, and delete items using natural language by mentioning the bot in Slack (e.g., `@ShopBot add https://...`, `@ShopBot find milk`).
-* **Add Item via URL:** Provide a Target.com product URL, and the bot will scrape details (title, price) and ask for quantity before adding.
-* **Search Items:** Ask the bot to find items on Target (e.g., "find cheap snacks"). It will present options, and you can choose one to add after specifying quantity.
-* **View List:** Ask the bot "what's on the list?" to see all currently active items.
-* **Delete Item:** Ask the bot to remove an item you added using its description or ID (e.g., "delete the cookies", "remove item id 5").
+* **Conversational Interaction:** Add, search, view, and delete items using natural language by mentioning the agent in Slack (e.g., `@ShopAgent add https://...`, `@ShopAgent find milk`).
+* **Add Item via URL:** Provide a Target.com product URL, and the agent will scrape details (title, price) and ask for quantity before adding.
+* **Search Items:** Ask the agent to find items on Target (e.g., "find cheap snacks"). It will present options, and you can choose one to add after specifying quantity.
+* **View List:** Ask the agent "what's on the list?" to see all currently active items.
+* **Delete Item:** Ask the agent to remove an item you added using its description or ID (e.g., "delete the cookies", "remove item id 5").
 * **Weekly Reminder:** Automatically posts a reminder message to a designated channel every Friday at 5 PM (configurable timezone).
 * **Order Placement:** An admin can use the `/order-placed` slash command to notify the channel that the order has been made and clear the active list.
 * **Context-Aware:** Uses conversation memory to handle multi-step interactions like asking for quantity after finding/scraping an item.
@@ -43,8 +43,8 @@ This project implements a Slack bot that acts as a conversational agent to manag
 
 1.  **Clone the Repository:**
     ```bash
-    git clone [https://github.com/YourUsername/slack-shopping-bot-langchain.git](https://github.com/YourUsername/slack-shopping-bot-langchain.git) # Replace with your repo URL
-    cd slack-shopping-bot-langchain
+    git clone [https://github.com/YourUsername/slack-shopping-agent-langchain.git](https://github.com/YourUsername/slack-shopping-agent-langchain.git) # Replace with your repo URL
+    cd slack-shopping-agent-langchain
     ```
 
 2.  **Environment Variables (Local Development):**
@@ -53,7 +53,7 @@ This project implements a Slack bot that acts as a conversational agent to manag
     * Add the following keys, replacing the placeholder values:
         ```dotenv
         # .env - For local development ONLY
-        SLACK_BOT_TOKEN=xoxb-your-slack-bot-token
+        SLACK_AGENT_TOKEN=xoxb-your-slack-agent-token
         SLACK_SIGNING_SECRET=your-slack-signing-secret
         OPENAI_API_KEY=sk-your-openai-api-key
         TARGET_CHANNEL_ID=C123ABC456 # ID of the Slack channel for reminders/notifications
@@ -93,7 +93,7 @@ Running locally is useful for testing and debugging but requires exposing your l
     ```bash
     uvicorn main:api --host 0.0.0.0 --port 8000 --reload
     ```
-5.  Test interactions by mentioning the bot in your test Slack channel. Remember to revert Slack URLs when deploying.
+5.  Test interactions by mentioning the agent in your test Slack channel. Remember to revert Slack URLs when deploying.
 
 ## Deployment (Render)
 
@@ -104,7 +104,7 @@ This application is designed to be deployed easily on Render using Docker.
     * Log in to Render -> New + -> Web Service.
     * Connect your GitHub repository.
     * Configure:
-        * **Name:** Choose a unique name (e.g., `slack-shop-bot-lc`).
+        * **Name:** Choose a unique name (e.g., `slack-shop-agent-lc`).
         * **Region:** Select a suitable region.
         * **Branch:** `main` (or your deployment branch).
         * **Runtime:** **Docker**. Render should detect `Dockerfile`.
@@ -117,7 +117,7 @@ This application is designed to be deployed easily on Render using Docker.
 4.  **Configure Environment Variables (Render UI):**
     * Go to the "Environment" section for your new service.
     * Add the following environment variables (do NOT use a `.env` file here):
-        * `SLACK_BOT_TOKEN`: Your production Slack bot token.
+        * `SLACK_AGENT_TOKEN`: Your production Slack agent token.
         * `SLACK_SIGNING_SECRET`: Your production Slack signing secret.
         * `OPENAI_API_KEY`: Your OpenAI API key.
         * `TARGET_CHANNEL_ID`: The production Slack channel ID.
@@ -139,40 +139,29 @@ This application is designed to be deployed easily on Render using Docker.
 
 Ensure your Slack App is configured with:
 
-* **Bot User:** Added.
-* **Scopes (Bot Token):** `app_mentions:read`, `chat:write`, `commands`, `users:read`, `channels:history`.
-* **Event Subscriptions:** Enabled, Request URL set, Subscribed to `app_mention` bot event.
+* **Agent User:** Added.
+* **Scopes (Agent Token):** `app_mentions:read`, `chat:write`, `commands`, `users:read`, `channels:history`.
+* **Event Subscriptions:** Enabled, Request URL set, Subscribed to `app_mention` agent event.
 * **Interactivity & Shortcuts:** Enabled, Request URL set (even if no interactive components are currently used).
 * **Slash Commands:** `/order-placed` command created, Request URL set.
-* **Credentials:** Bot Token (`SLACK_BOT_TOKEN`) and Signing Secret (`SLACK_SIGNING_SECRET`) copied securely.
-* **Installation:** App installed to your workspace, Bot invited to the `TARGET_CHANNEL_ID`.
+* **Credentials:** Agent Token (`SLACK_AGENT_TOKEN`) and Signing Secret (`SLACK_SIGNING_SECRET`) copied securely.
+* **Installation:** App installed to your workspace, Agent invited to the `TARGET_CHANNEL_ID`.
 
 ## Usage
 
-* **Primary Interaction:** Mention the bot in the designated Slack channel: `@YourBotName <your request>`.
+* **Primary Interaction:** Mention the agent in the designated Slack channel: `@YourAgentName <your request>`.
 * **Examples:**
-    * `@YourBotName add https://www.target.com/p/tide-pods...` (Follow prompts for quantity)
-    * `@YourBotName can you find laundry detergent?` (Review options, confirm selection, provide quantity)
-    * `@YourBotName what is on the shopping list?`
-    * `@YourBotName please delete the Tide Pods`
-    * `@YourBotName remove item 3` (If you know the Item ID from viewing the list)
-    * `@YourBotName hello` (Test basic interaction)
+    * `@YourAgentName add https://www.target.com/p/tide-pods...` (Follow prompts for quantity)
+    * `@YourAgentName can you find laundry detergent?` (Review options, confirm selection, provide quantity)
+    * `@YourAgentName what is on the shopping list?`
+    * `@YourAgentName please delete the Tide Pods`
+    * `@YourAgentName remove item 3` (If you know the Item ID from viewing the list)
+    * `@YourAgentName hello` (Test basic interaction)
 * **Admin Command:** Use `/order-placed` to mark the list as complete and notify the channel.
 
 ## Important Notes & Caveats
 
-* 🚨 **Target Scraping:** The CSS selectors used in `product_service.py` to scrape Target.com are **highly likely to break** when Target updates their website. This is the most fragile part of the bot and will require manual updates to the selectors periodically. Consider using professional scraping APIs for more robustness if needed.
-* **LLM Reliability:** The bot's understanding of natural language depends on the OpenAI model and the quality of the system prompt (`agent_executor.py`). Complex or ambiguous requests might be misunderstood. The prompt may need tuning based on observed behavior.
+* 🚨 **Target Scraping:** The CSS selectors used in `product_service.py` to scrape Target.com are **highly likely to break** when Target updates their website. This is the most fragile part of the agent and will require manual updates to the selectors periodically. Consider using professional scraping APIs for more robustness if needed.
+* **LLM Reliability:** The agent's understanding of natural language depends on the OpenAI model and the quality of the system prompt (`agent_executor.py`). Complex or ambiguous requests might be misunderstood. The prompt may need tuning based on observed behavior.
 * **API Costs:** Using the OpenAI API (especially GPT-4) for processing messages incurs costs. Monitor your OpenAI usage. Consider using GPT-3.5 Turbo for lower costs if acceptable.
-* **Security:** Keep your Slack tokens, signing secret, and OpenAI API key secure. Do not commit them directly into your code or `.env` file in Git history. Use Render's environment variable management.
-* **Error Handling:** Basic error handling is included, but can be improved for more specific user feedback. Check Render logs for detailed error information.
-
-## Future Improvements
-
-* Implement more robust scraping (e.g., using scraping APIs, fallback methods).
-* Add support for more stores.
-* Refine error handling and provide more informative feedback to users.
-* Implement item editing (e.g., changing quantity).
-* Use a more persistent memory backend (e.g., Redis, database) instead of in-memory for better scalability.
-* Add more sophisticated user permission checks (e.g., admin roles).
-* Improve fuzzy matching for deleting items by description.
+* **Security:** Keep your Slack tokens, signing secret, and OpenAI API key secure. Do not commit them directly into your code or `.env`
