@@ -47,8 +47,8 @@ class DeleteItemInput(BaseModel):
 # --- Tool Definitions ---
 
 class GetProductDetailsTool(BaseTool):
-    name = "get_product_details_from_url"
-    description = "Use this tool ONLY when you are given a specific target.com product URL. It extracts the product's title, price, and image URL from the webpage."
+    name: str = "get_product_details_from_url"
+    description: str = "Use this tool ONLY when you are given a specific target.com product URL. It extracts the product's title, price, and image URL from the webpage."
     args_schema: Type[BaseModel] = GetProductDetailsInput
 
     def _run(self, url: str) -> str:
@@ -105,8 +105,8 @@ class GetProductDetailsTool(BaseTool):
 
 
 class SearchProductsTool(BaseTool):
-    name = "search_target_products"
-    description = "Use this tool to find products available at Target based on a user's search query (e.g., 'cheap detergent', 'milk', 'birthday card'). Returns a list of products found."
+    name: str = "search_target_products"
+    description: str = "Use this tool to find products available at Target based on a user's search query (e.g., 'cheap detergent', 'milk', 'birthday card'). Returns a list of products found."
     args_schema: Type[BaseModel] = SearchProductsInput
 
     def _run(self, query: str) -> str:
@@ -140,8 +140,8 @@ class SearchProductsTool(BaseTool):
     #     except Exception as e: ...
 
 class AddItemTool(BaseTool):
-    name = "add_item_to_shopping_list"
-    description = "Use this tool to add a specific product with its quantity to the user's weekly shopping list. Only use AFTER confirming the product details AND quantity with the user."
+    name: str = "add_item_to_shopping_list"
+    description: str = "Use this tool to add a specific product with its quantity to the user's weekly shopping list. Only use AFTER confirming the product details AND quantity with the user."
     args_schema: Type[BaseModel] = AddItemInput
 
     def _run(self, user_id: str, user_name: str, product_title: str, quantity: int, price: Optional[float] = None, url: Optional[str] = None, image_url: Optional[str] = None) -> str:
@@ -175,8 +175,8 @@ class AddItemTool(BaseTool):
 
 
 class ViewListTool(BaseTool):
-    name = "view_shopping_list"
-    description = "Use this tool to view all items currently on the active shopping list."
+    name: str = "view_shopping_list"
+    description: str = "Use this tool to view all items currently on the active shopping list."
     args_schema: Type[BaseModel] = ViewListInput # No args, but schema required
 
     def _run(self, **kwargs) -> str: # Accept dummy kwargs if agent sends any
@@ -200,8 +200,8 @@ class ViewListTool(BaseTool):
             return f"Error: Could not retrieve the shopping list: {e}"
 
 class DeleteItemTool(BaseTool):
-    name = "delete_shopping_list_item"
-    description = "Use this tool to delete an item from the shopping list based on user description or item ID. You MUST provide the user_id and a description/ID."
+    name: str = "delete_shopping_list_item"
+    description: str = "Use this tool to delete an item from the shopping list based on user description or item ID. You MUST provide the user_id and a description/ID."
     args_schema: Type[BaseModel] = DeleteItemInput
 
     def _run(self, user_id: str, item_description: str) -> str:
