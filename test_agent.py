@@ -1,14 +1,15 @@
 """
 Simple test script to run the agent locally and interact with it through the console.
 """
+import sys
 import asyncio
 import logging
 import os
-import sys
 from dotenv import load_dotenv
-from agent_executor import invoke_agent
 import uuid
-from database import init_db
+from langchain.memory import ConversationBufferWindowMemory
+from agent_executor import invoke_agent
+from database import initialize_db
 
 # Load environment variables from .env file
 load_dotenv()
@@ -19,70 +20,55 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
-logger = logging.getLogger("agent_test")
+logger = logging.getLogger(__name__)
 
 async def main():
-    # Check environment variables
+    # Check if OpenAI API key is set
     if not os.getenv("OPENAI_API_KEY"):
-        logger.error("OPENAI_API_KEY is not set in environment variables.")
-        print("Error: OPENAI_API_KEY not set. Please add it to your .env file or environment.")
-        return
-
+        print("Error: OPENAI_API_KEY environment variable is not set.")
+        sys.exit(1)
+    
     # Initialize the database
     try:
-        init_db()
-        logger.info("Database initialized successfully.")
+        initialize_db()
+        logger.info("Database initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize database: {e}", exc_info=True)
-        print(f"Error: Failed to initialize database. {str(e)}")
-        return
-        
-    # Create a test session ID
-    session_id = f"local_test_{uuid.uuid4()}"
-    # Test user information
-    user_id = "U12345678"
+        logger.error(f"Error initializing database: {e}")
+        print(f"Error initializing database: {e}")
+        sys.exit(1)
+    
+    # Generate a session ID
+    session_id = str(uuid.uuid4())
+    # Use a placeholder user ID and name for testing
+    user_id = "test_user"
     user_name = "Test User"
-
-    print("\n=== Shopping Agent Local Test ===")
-    print("Type your message to interact with the agent. Type 'exit' to quit.")
-    print("Example: 'find milk', 'add https://www.target.com/p/some-product', 'what's on the list?'\n")
-
-    # Main interaction loop
+    
+    print("\n=== Shopping List Agent Test Console ===")
+    print("Type your messages to interact with the agent.")
+    print("Examples: 'find milk', 'add https://www.target.com/p/some-product-url'")
+    print("Type 'exit', 'quit', or 'bye' to end the session.\n")
+    
     while True:
         # Get user input
         user_input = input("You: ")
         
-        # Exit condition
-        if user_input.lower() in ["exit", "quit", "bye"]:
-            print("Goodbye!")
+        # Check if user wants to exit
+        if user_input.lower() in ['exit', 'quit', 'bye']:
+            print("Exiting test console.")
             break
         
-        # Skip empty input
-        if not user_input.strip():
-            continue
-            
-        print("\nProcessing...")
-        
         try:
-            # Invoke the agent
+            # Invoke the agent with the user input
             response = await invoke_agent(
-                user_input=user_input,
-                session_id=session_id,
-                user_id=user_id,
-                user_name=user_name
+                user_input,
+                session_id,
+                user_id,
+                user_name
             )
-            
-            # Print the response
             print(f"\nAgent: {response}\n")
-            
         except Exception as e:
-            logger.error(f"Error during agent invocation: {e}", exc_info=True)
-            print(f"\nError: Failed to get response from agent. See logs for details.\n")
+            logger.error(f"Error invoking agent: {e}")
+            print(f"Error: {e}")
 
 if __name__ == "__main__":
-    try:
-        # Run the main async function
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nTest terminated by user.")
-        sys.exit(0) 
+    asyncio.run(main()) 
