@@ -76,14 +76,7 @@ def get_session_history(session_id: str) -> ConversationBufferWindowMemory:
 
 
 # Create the Agent Executor with message history handling
-agent_with_chat_history = RunnableWithMessageHistory(
-    runnable=agent, # The core agent
-    get_session_history=get_session_history, # Function to retrieve memory
-    input_messages_key="input", # Key for new user input
-    history_messages_key="chat_history", # Key for memory buffer in prompt
-    agent_scratchpad_key="agent_scratchpad", # Key for intermediate steps placeholder
-    verbose=False # Set to True for detailed debugging console output
-)
+agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
 
 logger.info("LangChain agent executor created with tools and memory.")
 
@@ -96,13 +89,24 @@ async def invoke_agent(user_input: str, session_id: str, user_id: str, user_name
     augmented_input = f"[UserInfo: id='{user_id}', name='{user_name}']\n{user_input}"
 
     try:
-        # Configuration for the invoke call, including session_id
-        config = {"configurable": {"session_id": session_id}}
-        # Add callbacks for debugging if needed
-        # config["callbacks"] = [StdOutCallbackHandler()]
-
-        # Asynchronously invoke the agent
-        response = await agent_with_chat_history.ainvoke({"input": augmented_input}, config=config)
+        # Get the memory for this session
+        memory = get_session_history(session_id)
+        
+        # Get the chat history
+        chat_history = memory.load_memory_variables({})["chat_history"]
+        
+        # Run the agent
+        response = await agent_executor.ainvoke({
+            "input": augmented_input,
+            "chat_history": chat_history,
+            "agent_scratchpad": []
+        })
+        
+        # Save the interaction to memory
+        memory.save_context(
+            {"input": augmented_input}, 
+            {"output": response["output"]}
+        )
 
         # Extract the final output string
         agent_output = response.get("output", "Sorry, I encountered an issue and couldn't process that.")
@@ -112,4 +116,4 @@ async def invoke_agent(user_input: str, session_id: str, user_id: str, user_name
     except Exception as e:
         logger.error(f"Error invoking agent for session {session_id}: {e}", exc_info=True)
         # Provide a user-friendly error message
-        return f"Sorry, an internal error occurred while processing your request. Please try again later."
+        return "Sorry, an internal error occurred while processing your request. Please try again later."
