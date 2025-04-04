@@ -22,7 +22,7 @@ if not os.getenv("OPENAI_API_KEY"):
     # raise ValueError("OPENAI_API_KEY environment variable not set!")
 
 LLM = ChatOpenAI(
-    model="gpt-4-turbo",
+    model="gpt-4o-mini",
     temperature=0,
     openai_api_key=os.getenv("OPENAI_API_KEY") # Explicitly pass key
 )
