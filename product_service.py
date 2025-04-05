@@ -180,20 +180,29 @@ async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
         try:
             # The response might be a JSON object containing the list, e.g., {"results": [...] }
             # Or it might be the list directly if the model follows instructions perfectly.
+            # Or it might be a single product object with GPT-4o-mini
             data = json.loads(content)
-            # Adjust based on actual model output structure. If it returns {"results": [...]}, use data = data['results']
+            
+            products = []
+            
+            # Case 1: Response is a list of products
             if isinstance(data, list):
-                 products = data
-            elif isinstance(data, dict) and isinstance(data.get("results"), list): # Example if nested
-                 products = data["results"]
-            elif isinstance(data, dict) and isinstance(data.get("products"), list): # Another possible nesting
-                 products = data["products"]
+                products = data
+            # Case 2: Response is a dict with a list under "results" or "products" key
+            elif isinstance(data, dict) and isinstance(data.get("results"), list):
+                products = data["results"]
+            elif isinstance(data, dict) and isinstance(data.get("products"), list):
+                products = data["products"]
+            # Case 3: Response is a single product object (not in a list)
+            elif isinstance(data, dict) and 'name' in data and 'url' in data:
+                # Single product object - add it to products list
+                products = [data]
+                logger.info(f"AI search returned a single product object, converting to list: {data}")
             else:
-                 logger.error(f"AI search returned JSON, but not in the expected list format: {content}")
-                 return None
+                logger.error(f"AI search returned JSON, but not in the expected format: {content}")
+                return None
 
-
-            if isinstance(products, list):
+            if len(products) > 0:
                 logger.info(f"AI Search successful for '{query}', found {len(products)} potential products.")
                 # Basic validation/cleaning of results
                 validated_products = []
@@ -214,9 +223,9 @@ async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
                         logger.warning(f"Skipping invalid product structure from AI for query '{query}': {p}")
                 return validated_products
             else:
-                # Should have been caught above, but belt-and-suspenders
-                logger.error(f"AI search parsing failed, result was not a list. Raw content: {content}")
-                return None
+                # No products found
+                logger.warning(f"AI search found no products for query '{query}'")
+                return []
         except json.JSONDecodeError as json_e:
              logger.error(f"Failed to decode JSON from AI response for query '{query}': {json_e}. Raw response: {content}")
              # Sometimes models add ```json ... ``` markdown, try stripping it
