@@ -40,6 +40,19 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
     product_info: Dict[str, Any] = {"url": url, "title": None, "price": None, "image_url": None}
     browser = None # Initialize browser variable
 
+    # New York location data
+    NY_ZIP_CODE = "10001"  # Manhattan
+    NY_HEADERS = {
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    }
+    NY_COOKIES = [
+        {"name": "visitorZipCode", "value": NY_ZIP_CODE, "domain": ".target.com"},
+        {"name": "visitorId", "value": "01876543210ABCDEF", "domain": ".target.com"},
+        {"name": "GuestLocation", "value": f"{{\"zipCode\":\"{NY_ZIP_CODE}\"}}", "domain": ".target.com"}
+    ]
+
     try:
         async with async_playwright() as p:
             # Launch browser (consider persisting browser instance for multiple scrapes if needed)
@@ -52,7 +65,18 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
                 logger.error(f"Failed to launch playwright browser: {launch_error}")
                 return None # Cannot proceed without browser
 
-            page = await browser.new_page(user_agent=USER_AGENT)
+            # Create a context with New York location
+            context = await browser.new_context(
+                user_agent=USER_AGENT,
+                extra_http_headers=NY_HEADERS
+            )
+            
+            # Add cookies for New York location
+            await context.add_cookies(NY_COOKIES)
+            
+            # Create page using the context
+            page = await context.new_page()
+            
             await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})") # Further attempt to hide automation
 
             logger.debug(f"Navigating to {url}")
@@ -79,6 +103,7 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
 
             # Close page and browser promptly
             await page.close()
+            await context.close()
             await browser.close()
             browser = None # Ensure browser is marked as closed
 
@@ -145,12 +170,13 @@ async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
         client = AsyncOpenAI(api_key=openai_api_key)
 
         response = await client.chat.completions.create(
-            model="gpt-4-turbo", # Or "gpt-3.5-turbo" for faster/cheaper results
+            model="gpt-4o-mini", # Or "gpt-3.5-turbo" for faster/cheaper results
             messages=[
                 {
                     "role": "system",
                     "content": """You are a product search assistant. Find product options based on the user's query.
-                    Focus ONLY on products likely available at Target (target.com) in the US.
+                    Focus ONLY on products likely available at Target (target.com) stores in NEW YORK CITY.
+                    IMPORTANT: Only return products that are typically available in New York City Target stores.
                     For each product (max 3), provide ONLY the following information in a JSON list format:
                     - name: The product name.
                     - price: The approximate price (as a number, e.g., 10.99, NOT a string like '$10.99'). Use null if unknown.
@@ -167,7 +193,7 @@ async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
                     Do not include any explanatory text outside the JSON list itself.
                     """,
                 },
-                {"role": "user", "content": f"Find products at Target for: {query}"},
+                {"role": "user", "content": f"Find products at Target in New York City for: {query}"},
             ],
             temperature=0.1, # Low temperature for factual, structured output
             response_format={"type": "json_object"}, # Enforce JSON output if model supports
