@@ -32,6 +32,7 @@ class AddItemInput(BaseModel):
     price: Optional[float] = Field(description="The price per unit of the product, if known. Should be a number, not string.")
     url: Optional[str] = Field(description="The URL of the product page, if known")
     image_url: Optional[str] = Field(description="The URL of the product image, if known")
+    final_url: Optional[str] = Field(description="The final URL after redirects, if different from the original URL", default=None)
 
 class SearchProductsInput(BaseModel):
     query: str = Field(description="The natural language search query for the product (e.g., 'laundry detergent', 'oreo cookies')")
@@ -79,14 +80,41 @@ class GetProductDetailsTool(BaseTool):
                      "title": product_data.get('title', 'N/A'),
                      "price": price_val,
                      "image_url": product_data.get('image_url'),
-                     "original_url": url
+                     "original_url": url,
+                     "final_url": product_data.get('url', url)  # Use the final URL after redirects
                  }
                  # Return as string for the LLM. JSON format might be easier for it.
                  # return f"Successfully scraped: Title='{result_dict['title']}', Price={result_dict['price']}, ImageURL='{result_dict['image_url']}', OriginalURL='{url}'"
                  return json.dumps(result_dict)
 
             else:
-                logger.warning(f"Could not extract valid details from URL: {url}. Data: {product_data}")
+                # If we couldn't extract product details directly, try searching for the product name from the URL
+                logger.warning(f"Could not extract valid details from URL: {url}. Attempting to search based on URL keywords.")
+                
+                # Extract potential product name from URL
+                product_keywords = url.split('/')[-2] if '/' in url else url
+                product_keywords = product_keywords.replace('-', ' ').replace('amp;', '').replace('.html', '')
+                
+                # Only try searching if we have meaningful keywords
+                if len(product_keywords) > 5:  # Arbitrary minimum length to avoid too generic searches
+                    try:
+                        # Search for the product using extracted keywords
+                        search_results = loop.run_until_complete(search_products_gpt(product_keywords))
+                        
+                        if search_results and len(search_results) > 0:
+                            logger.info(f"Found alternative product through search: {search_results[0].get('name')}")
+                            # Return the first search result
+                            return json.dumps({
+                                "title": search_results[0].get('name'),
+                                "price": search_results[0].get('price'),
+                                "image_url": search_results[0].get('image_url'),
+                                "original_url": url,
+                                "final_url": search_results[0].get('url'),
+                                "note": "Original URL failed, found similar product through search"
+                            })
+                    except Exception as search_e:
+                        logger.error(f"Error in fallback search for URL {url}: {search_e}")
+                
                 return "Error: Could not extract valid product details from the URL. It might be invalid, out of stock, or the page structure changed."
         except Exception as e:
             logger.error(f"Error in {self.name} tool scraping {url}: {e}", exc_info=True)
@@ -145,7 +173,7 @@ class AddItemTool(BaseTool):
     description: str = "Use this tool to add a specific product with its quantity to the user's weekly shopping list. Only use AFTER confirming the product details AND quantity with the user."
     args_schema: Type[BaseModel] = AddItemInput
 
-    def _run(self, user_id: str, user_name: str, product_title: str, quantity: int, price: Optional[float] = None, url: Optional[str] = None, image_url: Optional[str] = None) -> str:
+    def _run(self, user_id: str, user_name: str, product_title: str, quantity: int, price: Optional[float] = None, url: Optional[str] = None, image_url: Optional[str] = None, final_url: Optional[str] = None) -> str:
         logger.info(f"Tool {self.name} called for user {user_id} ({user_name}) to add '{product_title}', Qty: {quantity}")
         if not isinstance(quantity, int) or quantity <= 0:
              return f"Error: Invalid quantity '{quantity}'. Quantity must be a positive whole number."
@@ -158,6 +186,8 @@ class AddItemTool(BaseTool):
                   logger.error(f"Failed to convert price '{price}' to float.")
                   price = None # Set price to None if conversion fails
 
+        # Use the final URL (after redirect) if available, otherwise use the original URL
+        product_url = final_url if final_url else url
 
         try:
             item_id = add_item(
@@ -166,7 +196,7 @@ class AddItemTool(BaseTool):
                 title=product_title,
                 quantity=quantity,
                 price=price,
-                url=url,
+                url=product_url,
                 image_url=image_url
             )
             return f"Success! Added {quantity} x '{product_title}' to the shopping list for {user_name} (Item ID: {item_id})."

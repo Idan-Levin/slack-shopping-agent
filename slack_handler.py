@@ -1,7 +1,7 @@
 import os
 import logging
 import re
-from typing import Optional
+from typing import Optional, Dict, Set
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_bolt.context.say.async_say import AsyncSay
@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 TARGET_CHANNEL_ID: Optional[str] = os.getenv("TARGET_CHANNEL_ID")
 # Track the agent ID between requests
 AGENT_USER_ID: Optional[str] = None # Will be populated on startup/first event
+
+# Store threads initiated by the bot
+BOT_INITIATED_THREADS: Set[str] = set()
 
 async def get_agent_user_id(client: AsyncWebClient):
     """Fetches and caches the Agent User ID."""
@@ -39,7 +42,7 @@ def register_listeners(app: AsyncApp):
     @app.event("app_mention") # Trigger when the agent is @mentioned
     async def handle_app_mention(body: dict, client: AsyncWebClient, say: AsyncSay, logger_from_context):
         """Handles mentions of the agent."""
-        global AGENT_USER_ID
+        global AGENT_USER_ID, BOT_INITIATED_THREADS
         if not AGENT_USER_ID:
              await get_agent_user_id(client) # Ensure AGENT_USER_ID is fetched
 
@@ -54,6 +57,9 @@ def register_listeners(app: AsyncApp):
              logger_from_context.warning(f"Missing key information in app_mention event: {event}")
              return
 
+        # Track this thread as initiated by the bot
+        BOT_INITIATED_THREADS.add(thread_ts)
+        
         # Remove the agent mention (e.g., "<@U123ABC> ") from the text
         mention_pattern = r'^<@' + (AGENT_USER_ID or '') + r'>\s*'
         processed_text = re.sub(mention_pattern, '', text).strip()
@@ -131,13 +137,71 @@ def register_listeners(app: AsyncApp):
             logger.error(f"Error processing order placement: {e}", exc_info=True)
             await say(text="Sorry, an error occurred while processing the order placement.")
 
-    @app.event("message") # Also listen to messages to fetch agent ID if needed, but don't process them
-    async def handle_message(client: AsyncWebClient, body: dict, logger_from_context):
-        """Generic message handler primarily used to ensure agent ID is fetched on startup/first message."""
+    async def process_message(body: dict, client: AsyncWebClient, say: AsyncSay, logger_from_context):
+        """Process a message and generate a response from the agent."""
+        event = body.get("event", {})
+        text = event.get("text", "").strip()
+        user_id = event.get("user")
+        channel_id = event.get("channel")
+        thread_ts = event.get("thread_ts", event.get("ts"))  # Use thread or main message ts
+
+        # Basic validation
+        if not all([text, user_id, channel_id, thread_ts]):
+            logger_from_context.warning(f"Missing key information in message event: {event}")
+            return
+            
+        # Skip processing if message is from the bot itself
+        if event.get("bot_id") or user_id == AGENT_USER_ID:
+            return
+        
+        # Fetch user info for name
+        user_name = "Unknown User"  # Fallback
+        try:
+            user_info_response = await client.users_info(user=user_id)
+            if user_info_response.get("ok"):
+                profile = user_info_response.get("user", {}).get("profile", {})
+                user_name = profile.get("display_name", profile.get("real_name", user_info_response.get("user", {}).get("name", "Unknown User")))
+            else:
+                logger_from_context.error(f"Error fetching user info for {user_id}: {user_info_response.get('error')}")
+        except Exception as e:
+            logger_from_context.error(f"Exception fetching user info for {user_id}: {e}", exc_info=True)
+
+        # Generate a unique session ID for memory
+        session_id = f"slack_{channel_id}_{thread_ts}"
+
+        # Invoke the LangChain agent
+        response_text = await invoke_agent(text, session_id, user_id, user_name)
+
+        # Send the agent's response back to the thread
+        try:
+            await say(text=response_text, thread_ts=thread_ts)
+        except Exception as e:
+            logger_from_context.error(f"Failed to send agent response to Slack: {e}", exc_info=True)
+            await say(text="Sorry, I encountered an issue sending my response.", thread_ts=thread_ts)
+
+    @app.event("message") 
+    async def handle_message(client: AsyncWebClient, body: dict, say: AsyncSay, logger_from_context):
+        """Handle messages, including those in threads started by the agent."""
+        global AGENT_USER_ID, BOT_INITIATED_THREADS
+        
         if not AGENT_USER_ID:
-            # Avoid fetching ID for agent's own messages or subtype messages (like channel join)
-            # Note: We don't respond to direct messages (DMs) here - only mentions in channels
-            event = body.get("event", {})
-            if not event.get("bot_id") and not event.get("subtype"):
-                 await get_agent_user_id(client)
-        # Don't process the message further here, only handle mentions in handle_app_mention
+            await get_agent_user_id(client)
+            
+        event = body.get("event", {})
+        
+        # Skip processing if message has a subtype (like join, leave, etc.)
+        if event.get("subtype"):
+            return
+            
+        # Skip processing if message is from the bot itself
+        if event.get("bot_id") or event.get("user") == AGENT_USER_ID:
+            return
+            
+        # Check if message is in a thread
+        thread_ts = event.get("thread_ts")
+        
+        # If message is in a thread that the bot initiated, process it without requiring mention
+        if thread_ts and thread_ts in BOT_INITIATED_THREADS:
+            logger.info(f"Processing message in bot-initiated thread {thread_ts}")
+            await process_message(body, client, say, logger_from_context)
+            return

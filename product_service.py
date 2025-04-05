@@ -56,15 +56,21 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
             await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})") # Further attempt to hide automation
 
             logger.debug(f"Navigating to {url}")
-            await page.goto(url, wait_until="domcontentloaded", timeout=25000) # Increased timeout
-
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=25000) # Increased timeout
+            
+            # Capture the final URL after any redirects
+            final_url = page.url
+            if final_url != url:
+                logger.info(f"URL redirected from {url} to {final_url}")
+                product_info["url"] = final_url  # Update with the actual final URL
+            
             # Wait for a key element (like price or title) to be present before proceeding
             # Adjust selector and timeout as needed
             try:
                 await page.wait_for_selector(TARGET_SELECTORS["price"], timeout=10000)
                 logger.debug("Price element found, proceeding with scraping.")
             except PlaywrightError:
-                logger.warning(f"Timed out waiting for price element on {url}. Page might not have loaded correctly or structure changed.")
+                logger.warning(f"Timed out waiting for price element on {final_url}. Page might not have loaded correctly or structure changed.")
                 # Attempt to get content anyway, might still work for title/image
                 # Consider taking a screenshot here for debugging: await page.screenshot(path='debug_screenshot.png')
 
@@ -92,10 +98,10 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
                 try:
                     product_info["price"] = float(price_text)
                 except (ValueError, TypeError):
-                    logger.warning(f"Could not parse price from text: '{price_text}' on {url}")
+                    logger.warning(f"Could not parse price from text: '{price_text}' on {final_url}")
                     product_info["price"] = None # Set to None if parsing fails
             else:
-                 logger.warning(f"Price element not found using selector '{TARGET_SELECTORS['price']}' on {url}")
+                 logger.warning(f"Price element not found using selector '{TARGET_SELECTORS['price']}' on {final_url}")
                  product_info["price"] = None
 
 
@@ -104,11 +110,11 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
             product_info["image_url"] = image_element.get('src') if image_element and image_element.get('src') else None
 
 
-            logger.info(f"Scraped data for {url}: Title='{product_info['title']}', Price={product_info['price']}")
+            logger.info(f"Scraped data for {final_url}: Title='{product_info['title']}', Price={product_info['price']}")
 
             # Basic validation: return None if essential info is missing
             if product_info["title"] in [None, "Title not found"] and product_info["price"] is None:
-                 logger.error(f"Failed to extract essential data (title, price) from {url}. Returning None.")
+                 logger.error(f"Failed to extract essential data (title, price) from {final_url}. Returning None.")
                  return None
             return product_info
 
