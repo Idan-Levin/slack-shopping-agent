@@ -217,15 +217,33 @@ class ViewListTool(BaseTool):
             if not items:
                 return "The shopping list is currently empty."
 
+            # Import the USER_NAMES_CACHE if available
+            try:
+                from slack_handler import USER_NAMES_CACHE
+                logger.info(f"Retrieved USER_NAMES_CACHE with {len(USER_NAMES_CACHE)} entries")
+            except ImportError:
+                logger.warning("Could not import USER_NAMES_CACHE from slack_handler")
+                USER_NAMES_CACHE = {}
+
             # Group items by user
             items_by_user = {}
             for item in items:
-                user_name = item.get('user_name', 'Unknown User')
-                # Log user info for debugging
-                logger.info(f"Item {item.get('id')}: user_id={item.get('user_id')}, user_name={user_name}")
-                if not user_name or user_name.strip() == '':
-                    user_name = f"User ID: {item.get('user_id', 'Unknown')}"
+                user_id = item.get('user_id', 'unknown')
                 
+                # Try to get the best user name we can
+                if user_id in USER_NAMES_CACHE:
+                    # Use cached name if available
+                    user_name = USER_NAMES_CACHE[user_id]
+                    logger.info(f"Using cached name for user {user_id}: {user_name}")
+                else:
+                    # Otherwise use stored name with fallback
+                    user_name = item.get('user_name', '')
+                    
+                # Final fallback if still empty
+                if not user_name or user_name.strip() == '':
+                    user_name = f"User {user_id}"
+                
+                # Add to user groups
                 if user_name not in items_by_user:
                     items_by_user[user_name] = []
                 items_by_user[user_name].append(item)

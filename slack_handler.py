@@ -1,7 +1,7 @@
 import os
 import logging
 import re
-from typing import Optional, Dict, Set
+from typing import Optional, Dict, Set, Mapping
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_bolt.context.say.async_say import AsyncSay
@@ -20,6 +20,9 @@ AGENT_USER_ID: Optional[str] = None # Will be populated on startup/first event
 # Store threads initiated by the bot
 BOT_INITIATED_THREADS: Set[str] = set()
 
+# Cache for user names
+USER_NAMES_CACHE: Dict[str, str] = {}
+
 async def get_agent_user_id(client: AsyncWebClient):
     """Fetches and caches the Agent User ID."""
     global AGENT_USER_ID
@@ -35,6 +38,60 @@ async def get_agent_user_id(client: AsyncWebClient):
         except Exception as e:
             logger.error(f"Exception while fetching agent user ID: {e}", exc_info=True)
     return AGENT_USER_ID
+
+async def get_user_display_name(client: AsyncWebClient, user_id: str) -> str:
+    """Fetch and return a user's display name from Slack API with caching."""
+    global USER_NAMES_CACHE
+    
+    # Return from cache if available
+    if user_id in USER_NAMES_CACHE:
+        logger.debug(f"Using cached name for user {user_id}: {USER_NAMES_CACHE[user_id]}")
+        return USER_NAMES_CACHE[user_id]
+    
+    # Default fallback name
+    display_name = f"User {user_id}"
+    
+    try:
+        user_info_response = await client.users_info(user=user_id)
+        logger.debug(f"User info response: {user_info_response}")
+        
+        if user_info_response.get("ok"):
+            user_data = user_info_response.get("user", {})
+            
+            # Comprehensive logging of all fields to help diagnose
+            logger.info(f"Complete user data for {user_id}: {user_data}")
+            
+            # Try multiple potential fields for the name
+            profile = user_data.get("profile", {})
+            real_name = profile.get("real_name") or user_data.get("real_name")
+            display_name_field = profile.get("display_name") or profile.get("display_name_normalized")
+            
+            # Log all possible name fields for debugging
+            logger.info(f"User {user_id} name fields - real_name: '{real_name}', " 
+                        f"display_name: '{display_name_field}', "
+                        f"name: '{user_data.get('name')}', "
+                        f"full_name: '{profile.get('real_name_normalized')}'")
+            
+            # Choose the best name available
+            if display_name_field and display_name_field.strip():
+                display_name = display_name_field
+            elif real_name and real_name.strip():
+                display_name = real_name
+            elif user_data.get("name"):
+                display_name = user_data.get("name")
+            else:
+                # As a last resort, create a user ID based name
+                display_name = f"User {user_id}"
+                
+            logger.info(f"Final name chosen for {user_id}: '{display_name}'")
+            
+            # Cache the name
+            USER_NAMES_CACHE[user_id] = display_name
+            
+    except Exception as e:
+        logger.error(f"Error fetching user info for {user_id}: {e}", exc_info=True)
+        
+    return display_name
 
 def register_listeners(app: AsyncApp):
     """Registers event listeners for the Slack Bolt app."""
@@ -68,30 +125,11 @@ def register_listeners(app: AsyncApp):
              await say(text="Hi there! How can I help you with the shopping list?", thread_ts=thread_ts)
              return
 
-        # Fetch user info for name
-        user_name = "Unknown User" # Fallback
-        try:
-            user_info_response = await client.users_info(user=user_id)
-            if user_info_response.get("ok"):
-                 profile = user_info_response.get("user", {}).get("profile", {})
-                 # Log the complete profile for debugging
-                 logger.info(f"User {user_id} profile data: {profile}")
-                 user_name = profile.get("display_name", profile.get("real_name", user_info_response.get("user",{}).get("name", "Unknown User")))
-                 # If name is empty, use the user ID as a fallback
-                 if not user_name or user_name.strip() == '':
-                    user_name = f"User ID: {user_id}"
-                 logger.info(f"Using user_name: '{user_name}' for user_id: {user_id}")
-            else:
-                logger_from_context.error(f"Error fetching user info for {user_id}: {user_info_response.get('error')}")
-        except Exception as e:
-            logger_from_context.error(f"Exception fetching user info for {user_id}: {e}", exc_info=True)
-
+        # Get user name from Slack API
+        user_name = await get_user_display_name(client, user_id)
 
         # Generate a unique session ID for memory (e.g., channel + thread)
         session_id = f"slack_{channel_id}_{thread_ts}"
-
-        # Acknowledge receipt (optional, potentially confusing with agent thinking)
-        # await say(text="Thinking...", thread_ts=thread_ts)
 
         # Invoke the LangChain agent
         response_text = await invoke_agent(processed_text, session_id, user_id, user_name)
@@ -135,12 +173,19 @@ def register_listeners(app: AsyncApp):
                 # Group items by user for the notification
                 items_by_user = {}
                 for item in items:
-                    user_name = item.get('user_name', 'Unknown User')
-                    # Log user info for debugging
-                    logger.info(f"Order item {item.get('id')}: user_id={item.get('user_id')}, user_name={user_name}")
-                    if not user_name or user_name.strip() == '':
-                        user_name = f"User ID: {item.get('user_id', 'Unknown')}"
+                    user_id = item.get('user_id', 'unknown')
                     
+                    # Get a proper display name for this user
+                    if user_id in USER_NAMES_CACHE:
+                        user_name = USER_NAMES_CACHE[user_id]
+                    else:
+                        # Try to get the name from the item
+                        user_name = item.get('user_name')
+                        if not user_name or user_name.strip() == '':
+                            # Fetch from Slack API if needed
+                            user_name = await get_user_display_name(client, user_id)
+                    
+                    # Add to the right group
                     if user_name not in items_by_user:
                         items_by_user[user_name] = []
                     items_by_user[user_name].append(item)
@@ -194,23 +239,8 @@ def register_listeners(app: AsyncApp):
         if event.get("bot_id") or user_id == AGENT_USER_ID:
             return
         
-        # Fetch user info for name
-        user_name = "Unknown User"  # Fallback
-        try:
-            user_info_response = await client.users_info(user=user_id)
-            if user_info_response.get("ok"):
-                profile = user_info_response.get("user", {}).get("profile", {})
-                # Log the complete profile for debugging
-                logger.info(f"User {user_id} profile data: {profile}")
-                user_name = profile.get("display_name", profile.get("real_name", user_info_response.get("user", {}).get("name", "Unknown User")))
-                # If name is empty, use the user ID as a fallback
-                if not user_name or user_name.strip() == '':
-                    user_name = f"User ID: {user_id}"
-                logger.info(f"Using user_name: '{user_name}' for user_id: {user_id}")
-            else:
-                logger_from_context.error(f"Error fetching user info for {user_id}: {user_info_response.get('error')}")
-        except Exception as e:
-            logger_from_context.error(f"Exception fetching user info for {user_id}: {e}", exc_info=True)
+        # Get user name using our improved function
+        user_name = await get_user_display_name(client, user_id)
 
         # Generate a unique session ID for memory
         session_id = f"slack_{channel_id}_{thread_ts}"
