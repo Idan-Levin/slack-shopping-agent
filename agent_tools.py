@@ -220,7 +220,12 @@ class ViewListTool(BaseTool):
             # Group items by user
             items_by_user = {}
             for item in items:
-                user_name = item['user_name']
+                user_name = item.get('user_name', 'Unknown User')
+                # Log user info for debugging
+                logger.info(f"Item {item.get('id')}: user_id={item.get('user_id')}, user_name={user_name}")
+                if not user_name or user_name.strip() == '':
+                    user_name = f"User ID: {item.get('user_id', 'Unknown')}"
+                
                 if user_name not in items_by_user:
                     items_by_user[user_name] = []
                 items_by_user[user_name].append(item)

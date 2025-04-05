@@ -74,7 +74,13 @@ def register_listeners(app: AsyncApp):
             user_info_response = await client.users_info(user=user_id)
             if user_info_response.get("ok"):
                  profile = user_info_response.get("user", {}).get("profile", {})
+                 # Log the complete profile for debugging
+                 logger.info(f"User {user_id} profile data: {profile}")
                  user_name = profile.get("display_name", profile.get("real_name", user_info_response.get("user",{}).get("name", "Unknown User")))
+                 # If name is empty, use the user ID as a fallback
+                 if not user_name or user_name.strip() == '':
+                    user_name = f"User ID: {user_id}"
+                 logger.info(f"Using user_name: '{user_name}' for user_id: {user_id}")
             else:
                 logger_from_context.error(f"Error fetching user info for {user_id}: {user_info_response.get('error')}")
         except Exception as e:
@@ -129,7 +135,12 @@ def register_listeners(app: AsyncApp):
                 # Group items by user for the notification
                 items_by_user = {}
                 for item in items:
-                    user_name = item['user_name']
+                    user_name = item.get('user_name', 'Unknown User')
+                    # Log user info for debugging
+                    logger.info(f"Order item {item.get('id')}: user_id={item.get('user_id')}, user_name={user_name}")
+                    if not user_name or user_name.strip() == '':
+                        user_name = f"User ID: {item.get('user_id', 'Unknown')}"
+                    
                     if user_name not in items_by_user:
                         items_by_user[user_name] = []
                     items_by_user[user_name].append(item)
@@ -189,7 +200,13 @@ def register_listeners(app: AsyncApp):
             user_info_response = await client.users_info(user=user_id)
             if user_info_response.get("ok"):
                 profile = user_info_response.get("user", {}).get("profile", {})
+                # Log the complete profile for debugging
+                logger.info(f"User {user_id} profile data: {profile}")
                 user_name = profile.get("display_name", profile.get("real_name", user_info_response.get("user", {}).get("name", "Unknown User")))
+                # If name is empty, use the user ID as a fallback
+                if not user_name or user_name.strip() == '':
+                    user_name = f"User ID: {user_id}"
+                logger.info(f"Using user_name: '{user_name}' for user_id: {user_id}")
             else:
                 logger_from_context.error(f"Error fetching user info for {user_id}: {user_info_response.get('error')}")
         except Exception as e:
