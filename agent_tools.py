@@ -217,15 +217,40 @@ class ViewListTool(BaseTool):
             if not items:
                 return "The shopping list is currently empty."
 
-            # Format the list clearly for the LLM to relay
+            # Group items by user
+            items_by_user = {}
+            for item in items:
+                user_name = item['user_name']
+                if user_name not in items_by_user:
+                    items_by_user[user_name] = []
+                items_by_user[user_name].append(item)
+            
+            # Format the list grouped by user
             response_lines = ["*🛒 Current Shopping List:*"]
-            for i, item in enumerate(items):
-                 response_lines.append(
-                     f"{i+1}. *{item['product_title']}* (ID: {item['id']})\n"
-                     f"   Qty: {item['quantity']} | Price: {format_price(item.get('price'))} | Added by: {item['user_name']}" +
-                     (f" | <{item['product_url']}|Link>" if item.get('product_url') else "")
-                 )
-            return "\n---\n".join(response_lines) # Use divider for readability
+            
+            # Add a summary of total items first
+            total_items = len(items)
+            total_price = sum(item.get('price', 0) * item.get('quantity', 1) for item in items if item.get('price') is not None)
+            response_lines.append(f"*Total: {total_items} items (Estimated total: {format_price(total_price)})*\n")
+            
+            # Add items grouped by user
+            for user_name, user_items in items_by_user.items():
+                # Add user header
+                user_items_count = sum(item.get('quantity', 1) for item in user_items)
+                response_lines.append(f"*👤 {user_name} ({user_items_count} items):*")
+                
+                # Add items for this user
+                for item in user_items:
+                    item_line = f"• *{item['product_title']}* (ID: {item['id']})\n"
+                    item_line += f"  Qty: {item['quantity']} | Price: {format_price(item.get('price'))}"
+                    if item.get('product_url'):
+                        item_line += f" | <{item['product_url']}|Link>"
+                    response_lines.append(item_line)
+                
+                # Add separator between users
+                response_lines.append("")
+            
+            return "\n".join(response_lines)
         except Exception as e:
             logger.error(f"Error in {self.name} tool: {e}", exc_info=True)
             return f"Error: Could not retrieve the shopping list: {e}"

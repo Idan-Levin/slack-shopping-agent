@@ -105,6 +105,7 @@ def register_listeners(app: AsyncApp):
         # Import database functions here or ensure they are accessible
         try:
             from database import mark_all_ordered, get_active_items
+            from utils import format_price  # Import utility for formatting prices
         except ImportError:
              logger.error("Database functions could not be imported in /order-placed.")
              await ack("Sorry, there was an internal error processing this command.")
@@ -125,10 +126,38 @@ def register_listeners(app: AsyncApp):
                     await say(text=f"Marked {num_ordered} items as ordered, but couldn't determine which channel to notify.")
                     return
 
-                list_summary = "\n".join([f"- {item['quantity']} x {item['product_title']} (requested by {item['user_name']})" for item in items])
+                # Group items by user for the notification
+                items_by_user = {}
+                for item in items:
+                    user_name = item['user_name']
+                    if user_name not in items_by_user:
+                        items_by_user[user_name] = []
+                    items_by_user[user_name].append(item)
+                
+                # Calculate total price
+                total_price = sum(item.get('price', 0) * item.get('quantity', 1) for item in items if item.get('price') is not None)
+                
+                # Format the message with items grouped by user
+                message_lines = [f"✅ Order has been placed for the following {num_ordered} items (Total: {format_price(total_price)}):"]
+                
+                for user_name, user_items in items_by_user.items():
+                    # Calculate user's subtotal
+                    user_total = sum(item.get('price', 0) * item.get('quantity', 1) for item in user_items if item.get('price') is not None)
+                    user_items_count = sum(item.get('quantity', 1) for item in user_items)
+                    
+                    # Add user section
+                    message_lines.append(f"\n👤 *{user_name}* ({user_items_count} items, subtotal: {format_price(user_total)}):")
+                    
+                    # Add items for this user
+                    for item in user_items:
+                        item_price = item.get('price', 0) * item.get('quantity', 1) if item.get('price') is not None else 0
+                        message_lines.append(f"• {item['quantity']} x {item['product_title']} ({format_price(item_price)})")
+                
+                message_lines.append("\nThe list has been cleared for next week.")
+                
                 await client.chat_postMessage(
                     channel=channel_to_notify,
-                    text=f"✅ Order has been placed for the following items:\n{list_summary}\n\nThe list has been cleared for next week."
+                    text="\n".join(message_lines)
                 )
                 logger.info(f"Order placed notification sent for {num_ordered} items to {channel_to_notify}.")
             else:
