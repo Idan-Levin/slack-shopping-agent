@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "product_title": "Tide Pods Laundry Detergent Pacs - Spring Meadow",
+    "product_url": "https://www.target.com/p/tide-pods-laundry-detergent-pacs-spring-meadow/-/A-13967308",
+    "price": 12.99,
+    "quantity": 2,
+    "user_name": "John Doe"
+  },
+  {
+    "id": 2,
+    "product_title": "Bounty Select-A-Size Paper Towels",
+    "product_url": "https://www.target.com/p/bounty-select-a-size-paper-towels/-/A-13288866",
+    "price": 15.99,
+    "quantity": 1,
+    "user_name": "Jane Smith"
+  },
+  {
+    "id": 3,
+    "product_title": "Cheerios Breakfast Cereal",
+    "product_url": "https://www.target.com/p/cheerios-breakfast-cereal/-/A-13301319",
+    "price": 3.99,
+    "quantity": 3,
+    "user_name": "John Doe"
+  },
+  {
+    "id": 4,
+    "product_title": "Folgers Classic Roast Ground Coffee",
+    "product_url": "https://www.target.com/p/folgers-classic-roast-ground-coffee/-/A-12945397",
+    "price": 8.49,
+    "quantity": 1,
+    "user_name": "Jane Smith"
+  },
+  {
+    "id": 5,
+    "product_title": "Clorox Disinfecting Wipes",
+    "product_url": "https://www.target.com/p/clorox-disinfecting-wipes/-/A-12992342",
+    "price": 4.99,
+    "quantity": 2,
+    "user_name": "Admin User"
+  }
+]
