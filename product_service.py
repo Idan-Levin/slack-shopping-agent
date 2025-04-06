@@ -157,8 +157,8 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
 
 # --- AI Search ---
 async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
-    """Uses OpenAI GPT to search for products based on a query."""
-    logger.info(f"Performing AI product search for query: '{query}'")
+    """Uses OpenAI GPT with web search to find accurate product information based on a query."""
+    logger.info(f"Performing AI product search with web search for query: '{query}'")
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:
         logger.error("OpenAI API key not configured for search.")
@@ -170,115 +170,179 @@ async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
         client = AsyncOpenAI(api_key=openai_api_key)
 
         response = await client.chat.completions.create(
-            model="gpt-4o-mini", # Or "gpt-3.5-turbo" for faster/cheaper results
+            model="gpt-4o-mini-search-preview",  # Use the model with web search capabilities
+            web_search_options={
+                "search_context_size": "medium",  # Balance between quality and cost
+                "user_location": {
+                    "type": "approximate",
+                    "approximate": {
+                        "country": "US",
+                        "city": "New York",
+                        "region": "New York"
+                    }
+                }
+            },
             messages=[
                 {
                     "role": "system",
-                    "content": """You are a product search assistant. Find product options based on the user's query.
-                    Focus ONLY on products likely available at Target (target.com) stores in NEW YORK CITY.
-                    IMPORTANT: Only return products that are typically available in New York City Target stores.
+                    "content": """You are a product search assistant that finds accurate Target products.
+                    Search the web to find REAL and CURRENT products available at Target (target.com).
                     For each product (max 3), provide ONLY the following information in a JSON list format:
-                    - name: The product name.
-                    - price: The approximate price (as a number, e.g., 10.99, NOT a string like '$10.99'). Use null if unknown.
-                    - url: A plausible URL to the product page on target.com. If unsure, provide the base Target URL or null.
-                    - image_url: A direct URL to an image of the product. Use null if unavailable.
-                    - in_stock: Boolean (true/false) or null, indicating likely availability based on search context.
+                    - name: The product name exactly as shown on Target.com.
+                    - price: The current price as a number (e.g., 10.99). Use null if unknown.
+                    - url: The EXACT and VALID URL to the product page on target.com. 
+                    - image_url: The direct URL to the product image. Use null if unavailable.
+                    - in_stock: Boolean (true/false) or null, indicating if the product is in stock.
 
+                    CRITICAL: Use web search to find REAL target.com URLs. Do not generate URLs.
                     Return ONLY the JSON list. Example format:
                     [
-                      { "name": "Tide PODS Laundry Detergent Pacs - Spring Meadow (81 Count)", "price": 21.49, "url": "https://www.target.com/p/tide-pods...", "image_url": "https://...", "in_stock": true },
-                      { "name": "Example Product B", "price": null, "url": "https://www.target.com/", "image_url": null, "in_stock": null }
+                      { "name": "Tide PODS Laundry Detergent Pacs - Spring Meadow (81 Count)", "price": 21.49, "url": "https://www.target.com/p/tide-pods-laundry-detergent-pacs-spring-meadow-81ct/-/A-50570157", "image_url": "https://target.scene7.com/is/image/Target/GUEST_44e47f56-ea5b-4b60-ae9a-bad46af9dcff", "in_stock": true },
+                      { "name": "Example Product B", "price": null, "url": "https://www.target.com/p/actual-product-url", "image_url": null, "in_stock": null }
                     ]
                     If you cannot find relevant items at Target, return an empty list [].
-                    Do not include any explanatory text outside the JSON list itself.
                     """,
                 },
-                {"role": "user", "content": f"Find products at Target in New York City for: {query}"},
-            ],
-            temperature=0.1, # Low temperature for factual, structured output
-            response_format={"type": "json_object"}, # Enforce JSON output if model supports
+                {"role": "user", "content": f"Find current products at Target for: {query}. Make sure to use the web search to find REAL products with VALID URLs."},
+            ]
         )
 
-        # content = response.choices[0].message.content.strip() # Updated attribute access
         message_content = response.choices[0].message.content
         if not message_content:
-             logger.error("AI search returned empty content.")
-             return None
+            logger.error("AI search returned empty content.")
+            return None
         content = message_content.strip()
 
         logger.debug(f"Raw OpenAI response content for '{query}': {content}")
+        
+        # Extract citation information if available
+        citations = []
+        if hasattr(response.choices[0].message, 'annotations'):
+            annotations = response.choices[0].message.annotations
+            if annotations:
+                for annotation in annotations:
+                    if annotation.type == 'url_citation':
+                        citations.append({
+                            'url': annotation.url_citation.url,
+                            'title': annotation.url_citation.title
+                        })
+                logger.info(f"Search returned {len(citations)} citations")
 
-        # Attempt to parse the JSON directly (assuming response_format worked)
-        try:
-            # The response might be a JSON object containing the list, e.g., {"results": [...] }
-            # Or it might be the list directly if the model follows instructions perfectly.
-            # Or it might be a single product object with GPT-4o-mini
-            data = json.loads(content)
+        # The response might not be perfectly formatted JSON, so we need to extract it
+        # Look for JSON list pattern in the content
+        json_pattern = r'\[\s*\{.*?\}\s*\]'
+        import re
+        json_match = re.search(json_pattern, content, re.DOTALL)
+        
+        if json_match:
+            try:
+                json_str = json_match.group(0)
+                data = json.loads(json_str)
+                logger.info(f"Successfully extracted JSON data from response")
+                products = data if isinstance(data, list) else [data]
+            except json.JSONDecodeError:
+                logger.warning(f"Found JSON-like content but failed to parse: {json_str}")
+                # Fall back to full content parsing
+                data = None
+        else:
+            logger.warning("No JSON list pattern found in response, attempting to parse full content")
+            data = None
             
-            products = []
-            
-            # Case 1: Response is a list of products
-            if isinstance(data, list):
-                products = data
-            # Case 2: Response is a dict with a list under "results" or "products" key
-            elif isinstance(data, dict) and isinstance(data.get("results"), list):
-                products = data["results"]
-            elif isinstance(data, dict) and isinstance(data.get("products"), list):
-                products = data["products"]
-            # Case 3: Response is a single product object (not in a list)
-            elif isinstance(data, dict) and 'name' in data and 'url' in data:
-                # Single product object - add it to products list
-                products = [data]
-                logger.info(f"AI search returned a single product object, converting to list: {data}")
-            else:
-                logger.error(f"AI search returned JSON, but not in the expected format: {content}")
-                return None
-
-            if len(products) > 0:
-                logger.info(f"AI Search successful for '{query}', found {len(products)} potential products.")
-                # Basic validation/cleaning of results
-                validated_products = []
-                for p in products:
-                    if isinstance(p, dict) and 'name' in p and 'url' in p:
-                         # Ensure price is float or None
-                         if 'price' in p and p['price'] is not None and not isinstance(p['price'], (int, float)):
-                             try:
-                                 p['price'] = float(str(p['price']).replace('$',''))
-                             except (ValueError, TypeError):
-                                 p['price'] = None
-                         # Basic URL check
-                         if not isinstance(p.get('url'), str) or not p['url'].startswith("https://www.target.com"):
-                             p['url'] = None # Nullify invalid URLs
-
-                         validated_products.append(p)
+        # If JSON extraction failed, try parsing the full content
+        if data is None:
+            try:
+                # Attempt to parse the JSON directly
+                data = json.loads(content)
+                
+                products = []
+                
+                # Case 1: Response is a list of products
+                if isinstance(data, list):
+                    products = data
+                # Case 2: Response is a dict with a list under "results" or "products" key
+                elif isinstance(data, dict) and isinstance(data.get("results"), list):
+                    products = data["results"]
+                elif isinstance(data, dict) and isinstance(data.get("products"), list):
+                    products = data["products"]
+                # Case 3: Response is a single product object (not in a list)
+                elif isinstance(data, dict) and 'name' in data and 'url' in data:
+                    products = [data]
+                    logger.info(f"AI search returned a single product object, converting to list: {data}")
+                else:
+                    logger.error(f"AI search returned JSON, but not in the expected format: {content}")
+                    # Last resort - try to extract JSON from text with regex
+                    products = []
+            except json.JSONDecodeError as json_e:
+                logger.error(f"Failed to decode JSON from AI response for query '{query}': {json_e}. Raw response: {content}")
+                # Sometimes models add ```json ... ``` markdown, try stripping it
+                if content.startswith("```json"):
+                    content = content[7:]
+                if content.endswith("```"):
+                    content = content[:-3]
+                content = content.strip()
+                try: # Retry parsing after stripping markdown
+                    data = json.loads(content)
+                    # Repeat list extraction logic
+                    if isinstance(data, list): 
+                        products = data
+                    elif isinstance(data, dict) and isinstance(data.get("results"), list): 
+                        products = data["results"]
+                    elif isinstance(data, dict) and isinstance(data.get("products"), list): 
+                        products = data["products"]
                     else:
-                        logger.warning(f"Skipping invalid product structure from AI for query '{query}': {p}")
-                return validated_products
-            else:
-                # No products found
-                logger.warning(f"AI search found no products for query '{query}'")
-                return []
-        except json.JSONDecodeError as json_e:
-             logger.error(f"Failed to decode JSON from AI response for query '{query}': {json_e}. Raw response: {content}")
-             # Sometimes models add ```json ... ``` markdown, try stripping it
-             if content.startswith("```json"):
-                 content = content[7:]
-             if content.endswith("```"):
-                 content = content[:-3]
-             content = content.strip()
-             try: # Retry parsing after stripping markdown
-                 data = json.loads(content)
-                 # Repeat list extraction logic... (refactor into a helper function if needed)
-                 if isinstance(data, list): products = data
-                 elif isinstance(data, dict) and isinstance(data.get("results"), list): products = data["results"]
-                 elif isinstance(data, dict) and isinstance(data.get("products"), list): products = data["products"]
-                 else: return None # Give up if structure still wrong
-                 # Repeat validation logic...
-                 # ...
-                 return validated_products # Return validated list
-             except json.JSONDecodeError:
-                  logger.error(f"Still failed to decode JSON after stripping markdown for query '{query}'. Final attempt content: {content}")
-                  return None # Give up
+                        # Try to find any array in the content
+                        array_match = re.search(r'\[(.*)\]', content, re.DOTALL)
+                        if array_match:
+                            try:
+                                products = json.loads(array_match.group(0))
+                                if not isinstance(products, list):
+                                    products = []
+                            except:
+                                products = []
+                        else:
+                            products = []
+                except:
+                    logger.error(f"Failed all attempts to parse response as JSON for query '{query}'")
+                    products = []
+
+        if len(products) > 0:
+            logger.info(f"AI Search successful for '{query}', found {len(products)} potential products.")
+            # Basic validation/cleaning of results
+            validated_products = []
+            for p in products:
+                if isinstance(p, dict) and 'name' in p:
+                    # Ensure price is float or None
+                    if 'price' in p and p['price'] is not None and not isinstance(p['price'], (int, float)):
+                        try:
+                            p['price'] = float(str(p['price']).replace('$',''))
+                        except (ValueError, TypeError):
+                            p['price'] = None
+                    
+                    # URLs are now expected to be reliable since they come from web search
+                    # but still do basic validation
+                    if 'url' in p and not isinstance(p['url'], str):
+                        p['url'] = None
+                    elif 'url' in p and not p['url'].startswith("https://www.target.com"):
+                        logger.warning(f"Invalid URL format from web search: {p.get('url')}")
+                        # Try to fix common URL issues
+                        if p['url'].startswith("www.target.com"):
+                            p['url'] = "https://" + p['url']
+                        elif p['url'].startswith("target.com"):
+                            p['url'] = "https://www." + p['url']
+                        else:
+                            p['url'] = None
+                        
+                    validated_products.append(p)
+                else:
+                    logger.warning(f"Skipping invalid product structure from AI for query '{query}': {p}")
+            
+            # URL validation successful message
+            logger.info(f"Validated {len(validated_products)} products with Target URLs")
+            return validated_products
+        else:
+            # No products found
+            logger.warning(f"AI search found no products for query '{query}'")
+            return []
 
     except Exception as e:
         logger.error(f"Unexpected error during OpenAI search for '{query}': {e}", exc_info=True)
