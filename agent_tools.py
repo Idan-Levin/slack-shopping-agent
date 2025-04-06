@@ -50,16 +50,18 @@ class DeleteItemInput(BaseModel):
 class GetProductDetailsFromURLTool(BaseTool):
     name: str = "get_product_details_from_url"
     description: str = "Use this tool ONLY when you are given a specific target.com product URL. It extracts the product's title, price, and other details from the webpage."
+    args_schema: Type[BaseModel] = GetProductDetailsInput
     
     def _run(self, url: str) -> str:
-        loop = asyncio.get_event_loop() if hasattr(asyncio, "get_event_loop") else None
-        if not loop:
-            # Create a new event loop if one doesn't exist
+        # Get or create an event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
         logger.info(f"Tool {self.name} called with URL: {url}")
-        # LangChain Tools run synchronously by default. Need to run async playwright code.
+        
         try:
             # Validate the URL format
             if not url.startswith("https://www.target.com/p/"):
@@ -84,8 +86,6 @@ class GetProductDetailsFromURLTool(BaseTool):
                     "original_url": url,
                     "final_url": product_data.get('url', url)  # Use the final URL after redirects
                 }
-                # Return as string for the LLM. JSON format might be easier for it.
-                # return f"Successfully scraped: Title='{result_dict['title']}', Price={result_dict['price']}, OriginalURL='{url}'"
                 return json.dumps(result_dict)
 
             else:
@@ -103,13 +103,14 @@ class GetProductDetailsFromURLTool(BaseTool):
                         search_results = loop.run_until_complete(search_products_gpt(product_keywords))
                         
                         if search_results and len(search_results) > 0:
-                            logger.info(f"Found alternative product through search: {search_results[0].get('product_title')}")
+                            product = search_results[0]
+                            logger.info(f"Found alternative product through search: {product.get('product_title')}")
                             # Return the first search result
                             return json.dumps({
-                                "title": search_results[0].get('product_title'),
-                                "price": search_results[0].get('price'),
+                                "title": product.get('product_title'),
+                                "price": product.get('price'),
                                 "original_url": url,
-                                "final_url": search_results[0].get('url'),
+                                "final_url": product.get('url'),
                                 "note": "Original URL failed, found similar product through search"
                             })
                     except Exception as search_e:
@@ -141,19 +142,25 @@ class SearchProductsTool(BaseTool):
     def _run(self, query: str) -> str:
         logger.info(f"Tool {self.name} called with query: {query}")
         try:
-            # Run async search function
+            # Get or create an event loop
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
 
+            # Run the async search function
             results = loop.run_until_complete(search_products_gpt(query))
 
             if results:
+                # Convert the product_title field to name for backwards compatibility
+                for product in results:
+                    if 'product_title' in product and 'name' not in product:
+                        product['name'] = product['product_title']
+                
                 # Return the raw results as a JSON string list for the LLM agent
-                # The LLM is responsible for presenting this nicely
-                return json.dumps(results)
+                formatted_results = json.dumps(results, indent=2)
+                return formatted_results
             else:
                 return f"Sorry, I couldn't find any products matching '{query}' at Target right now."
         except Exception as e:

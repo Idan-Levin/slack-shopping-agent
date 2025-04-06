@@ -177,12 +177,12 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
 
 
 # --- AI Search ---
-def search_products_gpt(query: str, max_results: int = 3) -> List[Dict[str, Any]]:
+async def search_products_gpt(query: str, max_results: int = 3) -> List[Dict[str, Any]]:
     """
     Search for products using GPT-4o with web search capabilities
     Returns a list of products with their details
     """
-    from openai import OpenAI
+    from openai import AsyncOpenAI
     import os
 
     api_key = os.getenv("OPENAI_API_KEY")
@@ -190,7 +190,7 @@ def search_products_gpt(query: str, max_results: int = 3) -> List[Dict[str, Any]
         logger.error("OPENAI_API_KEY not found in environment")
         return []
 
-    client = OpenAI(api_key=api_key)
+    client = AsyncOpenAI(api_key=api_key)
     
     system_message = """You are a Target shopping assistant that helps users find products on target.com.
 For each search query, use the web search tools to find relevant products from Target's website.
@@ -216,7 +216,7 @@ For the URL field, only use real, valid Target product URLs from your search res
     try:
         logger.info(f"Searching for products with query: '{query}'")
         
-        completion = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model="gpt-4o-search-preview",
             messages=[
                 {"role": "system", "content": system_message},
@@ -228,31 +228,22 @@ For the URL field, only use real, valid Target product URLs from your search res
             tools=[
                 {
                     "type": "web_search",
-                    "web_search": {
-                        "enable_websearch": True,
-                        "search_inputs": {
-                            "query_transformation_mode": "none",
-                            "search_query": f"Target products {query} site:target.com"
-                        },
-                        "enforce_citations": True,
-                        "result_format": "markdown_with_annotations",
-                        "search_context": "You are searching for products on target.com - make sure to search for the exact product the user requested. Filter to only target.com results. Look for current prices and stock information.",
-                        "user_location": {
-                            "country_code": "US"
-                        }
-                    }
                 }
             ]
         )
         
         # Extract products
-        response_content = completion.choices[0].message.content
+        message_content = response.choices[0].message.content
+        if not message_content:
+            logger.error("AI search returned empty content.")
+            return []
+        response_content = message_content.strip()
         logger.debug(f"GPT response: {response_content}")
         
         # Extract URL citations if available
         citations = []
-        if hasattr(completion.choices[0].message, 'annotations'):
-            for annotation in completion.choices[0].message.annotations:
+        if hasattr(response.choices[0].message, 'annotations'):
+            for annotation in response.choices[0].message.annotations:
                 if annotation.type == 'url_citation':
                     citation_info = {
                         'text': annotation.text,

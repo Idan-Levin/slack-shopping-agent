@@ -35,15 +35,15 @@ else:
     logger.info("OPENAI_API_KEY found in environment")
 
 async def test_search(query):
-    """Test the GPT-4o-mini Search Preview for product search"""
+    """Test the product search functionality"""
     logger.info(f"Testing product search for: '{query}'")
     
     try:
         # Call the search function
         results = await search_products_gpt(query)
         
-        if results is None:
-            logger.error("Search returned None")
+        if not results:
+            logger.error("Search returned no results")
             return False
             
         logger.info(f"Search returned {len(results)} results")
@@ -51,7 +51,7 @@ async def test_search(query):
         # Print results in a readable format
         for i, product in enumerate(results, 1):
             logger.info(f"Product {i}:")
-            logger.info(f"  Name: {product.get('name')}")
+            logger.info(f"  Name: {product.get('product_title')}")
             logger.info(f"  Price: ${product.get('price')}" if product.get('price') is not None else "  Price: Unknown")
             
             # Enhanced URL information
