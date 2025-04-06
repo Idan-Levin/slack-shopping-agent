@@ -3,6 +3,7 @@ import logging
 import os
 import json # Import json
 from typing import Dict, Optional, List, Any # Use Any for broader dict compatibility
+import aiohttp # For URL validation
 
 # Use async playwright
 from playwright.async_api import async_playwright, Error as PlaywrightError
@@ -19,6 +20,31 @@ if not os.getenv("OPENAI_API_KEY"):
 # Newer versions (>=1.0) use client instantiation
 # from openai import AsyncOpenAI # Use async client if making async calls
 # client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# --- URL Validation ---
+async def validate_target_url(url: str) -> bool:
+    """Check if a Target URL is valid and accessible."""
+    if not url or not isinstance(url, str):
+        return False
+        
+    if not url.startswith("https://www.target.com/p/"):
+        return False
+        
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)  # 10 second timeout
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
+            }
+            async with session.head(url, headers=headers, allow_redirects=True) as response:
+                if response.status == 200:
+                    return True
+                    
+                logger.warning(f"URL validation failed for {url} with status code: {response.status}")
+                return False
+    except Exception as e:
+        logger.warning(f"Error validating URL {url}: {e}")
+        return False
 
 # --- Scraping ---
 # WARNING: Target selectors are EXTREMELY volatile. This WILL break.
@@ -309,7 +335,10 @@ async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
             logger.info(f"AI Search successful for '{query}', found {len(products)} potential products.")
             # Basic validation/cleaning of results
             validated_products = []
-            for p in products:
+            
+            # Validate all URLs concurrently
+            validation_tasks = []
+            for i, p in enumerate(products):
                 if isinstance(p, dict) and 'name' in p:
                     # Ensure price is float or None
                     if 'price' in p and p['price'] is not None and not isinstance(p['price'], (int, float)):
@@ -318,27 +347,59 @@ async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
                         except (ValueError, TypeError):
                             p['price'] = None
                     
-                    # URLs are now expected to be reliable since they come from web search
-                    # but still do basic validation
-                    if 'url' in p and not isinstance(p['url'], str):
-                        p['url'] = None
-                    elif 'url' in p and not p['url'].startswith("https://www.target.com"):
-                        logger.warning(f"Invalid URL format from web search: {p.get('url')}")
-                        # Try to fix common URL issues
+                    # URLs are expected to be reliable but still need validation
+                    if 'url' in p and isinstance(p['url'], str):
+                        # Fix common URL issues
                         if p['url'].startswith("www.target.com"):
                             p['url'] = "https://" + p['url']
                         elif p['url'].startswith("target.com"):
                             p['url'] = "https://www." + p['url']
+                            
+                        # Only validate if it has the right URL format
+                        if p['url'].startswith("https://www.target.com"):
+                            validation_tasks.append((i, validate_target_url(p['url'])))
                         else:
+                            logger.warning(f"URL format doesn't match Target product URL: {p.get('url')}")
                             p['url'] = None
-                        
-                    validated_products.append(p)
+                            validated_products.append(p)
+                    else:
+                        p['url'] = None
+                        validated_products.append(p)
                 else:
                     logger.warning(f"Skipping invalid product structure from AI for query '{query}': {p}")
             
-            # URL validation successful message
-            logger.info(f"Validated {len(validated_products)} products with Target URLs")
-            return validated_products
+            # Wait for all validation tasks to complete
+            if validation_tasks:
+                validation_results = await asyncio.gather(*[task for _, task in validation_tasks])
+                
+                # Add products with valid URLs to the result
+                valid_url_count = 0
+                for i, (product_idx, _) in enumerate(validation_tasks):
+                    is_valid = validation_results[i]
+                    product = products[product_idx]
+                    
+                    if is_valid:
+                        valid_url_count += 1
+                        validated_products.append(product)
+                    else:
+                        # Keep the product but mark the URL as invalid
+                        logger.warning(f"Invalid Target URL found and marked as None: {product.get('url')}")
+                        product['url'] = None
+                        validated_products.append(product)
+                
+                logger.info(f"URL validation complete: {valid_url_count} valid URLs out of {len(validation_tasks)} tested")
+            
+            # If no products have valid URLs but we have validated products, return them anyway
+            if validated_products:
+                logger.info(f"Returning {len(validated_products)} products, some may have invalid URLs")
+                return validated_products
+            # Fall back to products without URL validation as a last resort
+            elif products:
+                logger.warning(f"No products with valid URLs found, returning unvalidated products as fallback")
+                return products
+            else:
+                logger.warning(f"No valid products found for query '{query}'")
+                return []
         else:
             # No products found
             logger.warning(f"AI search found no products for query '{query}'")

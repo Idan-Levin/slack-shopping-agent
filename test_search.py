@@ -5,7 +5,7 @@ import os
 import json
 import logging
 from dotenv import load_dotenv
-from product_service import search_products_gpt
+from product_service import search_products_gpt, validate_target_url
 
 # Setup logging
 logging.basicConfig(
@@ -44,13 +44,31 @@ async def test_search(query):
             logger.info(f"Product {i}:")
             logger.info(f"  Name: {product.get('name')}")
             logger.info(f"  Price: ${product.get('price')}" if product.get('price') is not None else "  Price: Unknown")
-            logger.info(f"  URL: {product.get('url')}")
+            
+            # Enhanced URL information
+            url = product.get('url')
+            if url:
+                logger.info(f"  URL: {url}")
+                # Validate URL
+                is_valid = await validate_target_url(url)
+                validation_status = "✅ VALID" if is_valid else "❌ INVALID"
+                logger.info(f"  URL Validation: {validation_status}")
+            else:
+                logger.info(f"  URL: None")
+                
             logger.info(f"  Image URL: {product.get('image_url') or 'None'}")
             logger.info(f"  In Stock: {product.get('in_stock')}")
             
         # Validate URLs
-        valid_urls = [p for p in results if p.get('url') and p['url'].startswith('https://www.target.com/p/')]
-        logger.info(f"Found {len(valid_urls)} valid Target product URLs out of {len(results)} results")
+        valid_urls = []
+        for product in results:
+            url = product.get('url')
+            if url and url.startswith('https://www.target.com/p/'):
+                is_valid = await validate_target_url(url)
+                if is_valid:
+                    valid_urls.append(url)
+                    
+        logger.info(f"Found {len(valid_urls)} verified working Target product URLs out of {len(results)} results")
         
         # Save results to a file for inspection
         with open(f"search_results_{query.replace(' ', '_')}.json", "w") as f:
