@@ -159,6 +159,52 @@ Ensure your Slack App is configured with:
     * `@YourAgentName hello` (Test basic interaction)
 * **Admin Command:** Use `/order-placed` to mark the list as complete and notify the channel.
 
+## Target Automation Integration
+
+The shopping agent now supports integration with Target automation systems through a semi-automated approach:
+
+### How It Works
+
+1. **List Collection**: Users add items to the shopping list as usual through Slack.
+2. **Export Process**: When an admin runs the `/order-placed` command:
+   * The system marks all items as ordered (as before)
+   * The active shopping list is exported to a JSON file
+   * The admin receives a private notification with the export file path and instructions
+
+3. **Automation Launch**: The admin can then run the bridge script to process the list:
+   ```bash
+   python target_bridge.py [--file "path_to_export.json"] [--notify]
+   ```
+
+4. **Result Notification**: The bridge script can send results back to Slack when completed.
+
+### Configuration
+
+Add the following environment variables to your `.env` file or deployment environment:
+
+```
+EXPORT_DIR=./exports            # Directory for shopping list exports
+EXPORT_FORMAT=json              # Format for export files (json or txt)
+TARGET_AUTOMATION_PATH=./target_automation.py  # Path to your Target automation
+```
+
+### Benefits of This Approach
+
+* **Human Oversight**: Maintains admin approval before automation runs
+* **Simple Integration**: Uses file-based approach for easy debugging
+* **Flexible Format**: Supports both JSON and TXT export formats
+* **Minimal Changes**: Core shopping list functionality remains unchanged
+
+### Customization
+
+The Target automation bridge (`target_bridge.py`) is designed to be customized for your specific automation needs. The placeholder code demonstrates how to:
+
+1. Load the exported shopping list
+2. Process items for Target automation
+3. Report results back to Slack
+
+Modify the `launch_automation` method to integrate with your specific Target automation system.
+
 ## Important Notes & Caveats
 
 * 🚨 **Target Scraping:** The CSS selectors used in `product_service.py` to scrape Target.com are **highly likely to break** when Target updates their website. This is the most fragile part of the agent and will require manual updates to the selectors periodically. Consider using professional scraping APIs for more robustness if needed.

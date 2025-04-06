@@ -150,7 +150,7 @@ def register_listeners(app: AsyncApp):
         # Import database functions here or ensure they are accessible
         try:
             from database import mark_all_ordered, get_active_items
-            from utils import format_price  # Import utility for formatting prices
+            from utils import format_price, export_shopping_list  # Import utility for exporting
         except ImportError:
              logger.error("Database functions could not be imported in /order-placed.")
              await ack("Sorry, there was an internal error processing this command.")
@@ -189,6 +189,40 @@ def register_listeners(app: AsyncApp):
         if not items:
              await say(text="There were no active items on the list to mark as ordered.")
              return
+
+        # Export the shopping list before marking as ordered
+        try:
+            # Get export format preference from environment or default to JSON
+            export_format = os.getenv("EXPORT_FORMAT", "json").lower()
+            export_path = export_shopping_list(items, export_format=export_format)
+            
+            if export_path:
+                logger.info(f"Shopping list exported to {export_path}")
+                
+                # Build message with instructions for running the bridge script
+                bridge_script_path = os.path.join(os.path.dirname(__file__), "target_bridge.py")
+                bridge_cmd = f"python {bridge_script_path} --file \"{export_path}\" --notify"
+                
+                # Send a private message to the admin about the export
+                await client.chat_postEphemeral(
+                    channel=body.get("channel_id"),
+                    user=user_id,
+                    text=f"🔄 Shopping list exported to `{export_path}` for automation\n\n*To run the Target automation:*\n```\n{bridge_cmd}\n```"
+                )
+            else:
+                logger.error("Failed to export shopping list")
+                await client.chat_postEphemeral(
+                    channel=body.get("channel_id"),
+                    user=user_id,
+                    text="⚠️ Failed to export shopping list for automation"
+                )
+        except Exception as e:
+            logger.error(f"Error exporting shopping list: {e}", exc_info=True)
+            await client.chat_postEphemeral(
+                channel=body.get("channel_id"),
+                user=user_id,
+                text=f"⚠️ Error exporting shopping list: {str(e)}"
+            )
 
         try:
             num_ordered = mark_all_ordered()

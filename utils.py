@@ -1,6 +1,9 @@
 import re
 import logging
-from typing import Optional # Import Optional
+import os
+import json
+from datetime import datetime
+from typing import Optional, List, Dict, Any # Import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,3 +40,99 @@ def clean_text(text: str) -> str:
      if not isinstance(text, str):
           return ""
      return " ".join(text.split())
+
+def export_shopping_list(items: List[Dict[str, Any]], export_format: str = "json") -> Optional[str]:
+    """
+    Export the shopping list to a file in the specified format.
+    
+    Args:
+        items: List of shopping items to export
+        export_format: Format to export ('json' or 'txt')
+        
+    Returns:
+        Path to the exported file or None if export failed
+    """
+    if not items:
+        logger.warning("No items to export")
+        return None
+    
+    # Create exports directory if it doesn't exist
+    export_dir = os.getenv("EXPORT_DIR", "./exports")
+    if not os.path.exists(export_dir):
+        os.makedirs(export_dir, exist_ok=True)
+        logger.info(f"Created export directory: {export_dir}")
+    
+    # Generate a timestamp for the filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    if export_format.lower() == "json":
+        # Create a simplified version of the items for export
+        export_items = []
+        for item in items:
+            export_items.append({
+                "id": item.get("id"),
+                "product_title": item.get("product_title"),
+                "product_url": item.get("product_url"),
+                "price": item.get("price"),
+                "quantity": item.get("quantity", 1),
+                "user_name": item.get("user_name", "Unknown User")
+            })
+        
+        # Generate the filename
+        filename = f"shopping_list_{timestamp}.json"
+        file_path = os.path.join(export_dir, filename)
+        
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(export_items, f, indent=2)
+            logger.info(f"Successfully exported shopping list to JSON: {file_path}")
+            return file_path
+        except Exception as e:
+            logger.error(f"Failed to export shopping list to JSON: {e}", exc_info=True)
+            return None
+    
+    elif export_format.lower() == "txt":
+        # Generate the filename
+        filename = f"shopping_list_{timestamp}.txt"
+        file_path = os.path.join(export_dir, filename)
+        
+        try:
+            with open(file_path, 'w') as f:
+                f.write("Shopping List\n")
+                f.write("============\n\n")
+                
+                # Group items by user
+                items_by_user = {}
+                for item in items:
+                    user_name = item.get("user_name", "Unknown User")
+                    if user_name not in items_by_user:
+                        items_by_user[user_name] = []
+                    items_by_user[user_name].append(item)
+                
+                # Write items grouped by user
+                for user_name, user_items in items_by_user.items():
+                    f.write(f"User: {user_name}\n")
+                    for item in user_items:
+                        product_title = item.get("product_title", "Unknown Item")
+                        quantity = item.get("quantity", 1)
+                        price = item.get("price")
+                        price_str = format_price(price) if price is not None else "Price not found"
+                        
+                        line = f"- {quantity} x {product_title} ({price_str})"
+                        
+                        product_url = item.get("product_url")
+                        if product_url:
+                            line += f"\n  URL: {product_url}"
+                        
+                        f.write(line + "\n")
+                    f.write("\n")
+            
+            logger.info(f"Successfully exported shopping list to TXT: {file_path}")
+            return file_path
+        except Exception as e:
+            logger.error(f"Failed to export shopping list to TXT: {e}", exc_info=True)
+            return None
+    
+    else:
+        logger.error(f"Unsupported export format: {export_format}")
+        return None
