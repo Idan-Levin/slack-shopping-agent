@@ -32,7 +32,7 @@ from slack_handler import register_listeners, get_agent_user_id
 register_listeners(slack_app)
 
 # Import scheduler setup AFTER initializing slack_app and getting client
-from scheduler import setup_scheduler, send_test_message
+from scheduler import setup_scheduler
 # Create Slack client instance using the token from environment variable
 slack_client = AsyncWebClient(token=os.environ.get("SLACK_AGENT_TOKEN"))
 
@@ -88,13 +88,12 @@ async def startup_event():
     # Proactively fetch Agent User ID on startup
     await get_agent_user_id(slack_client)
     
-    # Try sending a test message from scheduler to verify token works
-    logger.info("Sending test message directly from startup event...")
-    test_success = await send_test_message()
-    if test_success:
-        logger.info("✅ Test message sent successfully! Slack token is working.")
+    # Check if token is valid
+    logger.info("Verifying Slack token configuration...")
+    if slack_client.token:
+        logger.info("✅ Slack token is configured.")
     else:
-        logger.error("❌ Failed to send test message. Scheduled messages will likely fail.")
+        logger.error("❌ No Slack token found. Scheduled messages will likely fail.")
 
 @api.on_event("shutdown")
 async def shutdown_event():

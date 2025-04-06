@@ -16,35 +16,12 @@ global_scheduler = None
 custom_reminders = {}
 
 async def send_test_message():
-    """Sends an immediate test message with a fresh client."""
-    channel_id = os.getenv("TARGET_CHANNEL_ID")
-    if not channel_id:
-        logger.error("TARGET_CHANNEL_ID not set in environment variables. Cannot send test message.")
-        return
-
-    token = os.getenv("SLACK_AGENT_TOKEN")
-    if not token:
-        logger.error("SLACK_AGENT_TOKEN not set in environment. Cannot send test message.")
-        return
-
-    # Create a fresh client with explicit token
-    test_client = AsyncWebClient(token=token)
-    logger.info(f"Created test client with token: {token[:5]}...{token[-5:] if len(token) > 10 else ''}")
-    
-    try:
-        logger.info(f"Attempting to send test message to channel {channel_id}")
-        response = await test_client.chat_postMessage(
-            channel=channel_id,
-            text="🧪 This is a test message to verify Slack authentication. If you see this, the bot can post scheduled messages!"
-        )
-        logger.info(f"Test message sent successfully. Timestamp: {response.get('ts')}")
-        return True
-    except SlackApiError as e:
-        logger.error(f"Slack API error sending test message: {e.response['error']}", exc_info=True)
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error sending test message: {e}", exc_info=True)
-        return False
+    """
+    DISABLED: Previously sent a test message on startup.
+    This function is intentionally disabled to prevent test messages when service starts.
+    """
+    logger.info("Test message function called but is now disabled")
+    return True
 
 async def send_weekly_reminder(client: AsyncWebClient):
     """Sends the weekly shopping list reminder to the target channel."""
