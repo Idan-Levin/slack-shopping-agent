@@ -3,6 +3,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.errors import SlackApiError
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,24 @@ def setup_scheduler(client: AsyncWebClient):
     scheduler = AsyncIOScheduler(timezone=scheduler_timezone)
 
     try:
-        # Schedule to run every Friday at 5:00 PM (17:00) in the specified timezone
-        # Use integers for time components
+        # For testing: Schedule a notification at 12:35 PM Israel time today
+        test_time = datetime.now()
+        # Set hour to 12 and minute to 35
+        test_time = test_time.replace(hour=12, minute=35, second=0, microsecond=0)
+        
+        # Add the test job to trigger at 12:35 PM
+        scheduler.add_job(
+            send_weekly_reminder,
+            'date',  # Use date trigger for a one-time execution
+            run_date=test_time,
+            args=[client],
+            id='test_reminder_job',
+            replace_existing=True
+        )
+        
+        logger.info(f"Added test reminder scheduled for today at 12:35 PM Israel time: {test_time}")
+        
+        # Keep the regular weekly schedule as well
         scheduler.add_job(
             send_weekly_reminder,
             trigger='cron',
@@ -51,12 +68,9 @@ def setup_scheduler(client: AsyncWebClient):
 
         scheduler.start()
         logger.info("APScheduler started. Weekly reminder scheduled for Fridays at 5 PM.")
-        # Log scheduled jobs for confirmation
-        # try:
-        #     jobs = scheduler.get_jobs()
-        #     logger.info(f"Scheduled jobs: {[job.id for job in jobs]}")
-        # except Exception as e:
-        #      logger.error(f"Could not retrieve scheduled jobs: {e}")
+        # Log all scheduled jobs
+        jobs = scheduler.get_jobs()
+        logger.info(f"Scheduled jobs: {[job.id for job in jobs]}")
 
     except Exception as e:
         logger.error(f"Failed to setup or start scheduler: {e}", exc_info=True)
