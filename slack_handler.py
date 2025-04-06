@@ -6,6 +6,7 @@ from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_bolt.context.say.async_say import AsyncSay
 from slack_bolt.context.ack.async_ack import AsyncAck # Import AsyncAck
+from datetime import datetime, timedelta
 
 # Assuming agent_executor.py is in the same directory
 from agent_executor import invoke_agent
@@ -281,3 +282,146 @@ def register_listeners(app: AsyncApp):
             logger.info(f"Processing message in bot-initiated thread {thread_ts}")
             await process_message(body, client, say, logger_from_context)
             return
+
+    @app.command("/schedule-reminder")
+    async def handle_schedule_reminder(ack: AsyncAck, body: dict, say: AsyncSay, client: AsyncWebClient, logger_from_context):
+        """Handle the /schedule-reminder command to schedule custom reminders."""
+        await ack()  # Acknowledge the command immediately
+        
+        # Get the user ID to check if they're an admin
+        user_id = body.get("user_id")
+        if not user_id:
+            await say(text="Error: Could not identify the user. Please try again.")
+            return
+        
+        # Check if the user is an admin
+        try:
+            user_info = await client.users_info(user=user_id)
+            is_admin = user_info.get("user", {}).get("is_admin", False)
+            
+            if not is_admin:
+                await say(text="Sorry, only workspace admins can schedule reminders.")
+                logger_from_context.warning(f"Non-admin user {user_id} attempted to use /schedule-reminder")
+                return
+        except Exception as e:
+            logger_from_context.error(f"Error checking admin status: {e}")
+            await say(text="Error checking admin permissions. Please try again later.")
+            return
+        
+        # Parse command text
+        command_text = body.get("text", "").strip()
+        
+        if not command_text:
+            # Show help if no arguments are provided
+            help_text = """
+*Schedule a reminder with `/schedule-reminder`*
+
+*Usage:*
+• One-time reminder: `/schedule-reminder once HH:MM Your reminder message`
+• Weekly reminder: `/schedule-reminder weekly day HH:MM Your reminder message`
+
+*Examples:*
+• `/schedule-reminder once 15:30 Time to review the shopping list!`
+• `/schedule-reminder weekly fri 17:00 Add items to the shopping list before the weekend!`
+
+*Days:* mon, tue, wed, thu, fri, sat, sun
+*Time:* 24-hour format (e.g., 14:30 for 2:30 PM)
+            """
+            await say(text=help_text)
+            return
+        
+        # Parse command arguments
+        args = command_text.split()
+        
+        if len(args) < 3:
+            await say(text="Error: Not enough arguments. Type `/schedule-reminder` for usage help.")
+            return
+        
+        # Import the scheduler functions
+        from scheduler import schedule_custom_reminder
+        
+        try:
+            schedule_type = args[0].lower()
+            
+            if schedule_type == "once":
+                # Format: /schedule-reminder once HH:MM message
+                time_str = args[1]
+                message = " ".join(args[2:])
+                
+                # Parse the time
+                try:
+                    hour, minute = map(int, time_str.split(":"))
+                    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                        raise ValueError("Invalid time range")
+                except:
+                    await say(text="Error: Invalid time format. Please use HH:MM in 24-hour format.")
+                    return
+                
+                # Get current date
+                now = datetime.now()
+                target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                
+                # If the time is in the past for today, schedule it for tomorrow
+                if target_time < now:
+                    target_time = target_time + timedelta(days=1)
+                
+                # Schedule the reminder
+                job_id = await schedule_custom_reminder(target_time, message, client)
+                
+                if job_id:
+                    formatted_time = target_time.strftime("%Y-%m-%d %H:%M")
+                    await say(text=f"✅ One-time reminder scheduled for {formatted_time} (Israel time):\n> {message}")
+                else:
+                    await say(text="Failed to schedule the reminder. Please try again.")
+                
+            elif schedule_type == "weekly":
+                # Format: /schedule-reminder weekly day HH:MM message
+                if len(args) < 4:
+                    await say(text="Error: Not enough arguments for weekly reminder. Format: `/schedule-reminder weekly day HH:MM message`")
+                    return
+                
+                day_str = args[1].lower()
+                time_str = args[2]
+                message = " ".join(args[3:])
+                
+                # Convert day string to day_of_week number
+                day_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+                if day_str not in day_map:
+                    await say(text="Error: Invalid day. Use mon, tue, wed, thu, fri, sat, or sun.")
+                    return
+                    
+                day_of_week = day_map[day_str]
+                
+                # Parse the time
+                try:
+                    hour, minute = map(int, time_str.split(":"))
+                    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                        raise ValueError("Invalid time range")
+                except:
+                    await say(text="Error: Invalid time format. Please use HH:MM in 24-hour format.")
+                    return
+                
+                # Schedule the weekly reminder
+                job_id = await schedule_custom_reminder(
+                    None,  # No specific date for weekly reminders
+                    message,
+                    client,
+                    is_weekly=True,
+                    day_of_week=day_of_week,
+                    hour=hour,
+                    minute=minute
+                )
+                
+                if job_id:
+                    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                    day_name = day_names[day_of_week]
+                    await say(text=f"✅ Weekly reminder scheduled for every {day_name} at {hour:02d}:{minute:02d} (Israel time):\n> {message}")
+                else:
+                    await say(text="Failed to schedule the weekly reminder. Please try again.")
+            
+            else:
+                await say(text=f"Error: Unknown schedule type '{schedule_type}'. Use 'once' or 'weekly'.")
+        
+        except Exception as e:
+            logger_from_context.error(f"Error scheduling reminder: {e}", exc_info=True)
+            await say(text=f"Error scheduling reminder: {str(e)}")
