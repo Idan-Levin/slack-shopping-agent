@@ -196,7 +196,7 @@ async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
         client = AsyncOpenAI(api_key=openai_api_key)
 
         response = await client.chat.completions.create(
-            model="gpt-4o-mini-search-preview",  # Use the model with web search capabilities
+            model="gpt-4o-search-preview",  # Use the full model with better web search capabilities
             web_search_options={
                 "search_context_size": "medium",  # Balance between quality and cost
                 "user_location": {
