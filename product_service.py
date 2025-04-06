@@ -184,6 +184,7 @@ async def search_products_gpt(query: str, max_results: int = 3) -> List[Dict[str
     """
     from openai import AsyncOpenAI
     import os
+    import re
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -260,6 +261,15 @@ For the URL field, only use real, valid Target product URLs from your search res
                     citations.append(citation_info)
                     logger.debug(f"Found citation: {citation_info}")
         
+        # Check if response is in markdown code block and extract JSON
+        if response_content.startswith("```") and "```" in response_content[3:]:
+            # Extract content between markdown code blocks
+            pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+            matches = re.search(pattern, response_content)
+            if matches:
+                response_content = matches.group(1).strip()
+                logger.info(f"Extracted JSON from markdown code block: {response_content[:100]}...")
+        
         # Try to parse the JSON response
         try:
             # For newer response format
@@ -333,10 +343,50 @@ For the URL field, only use real, valid Target product URLs from your search res
                 
                 valid_products.append(product)
             
-            return valid_products[:max_results]
+            if valid_products:
+                logger.info(f"Successfully found {len(valid_products)} products for '{query}'")
+                return valid_products[:max_results]
+            else:
+                logger.warning(f"No valid products found for '{query}'")
+                return []
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e} - Content: {response_content}")
+            # Try a different approach - look for a JSON array in the response
+            json_pattern = r'\[\s*\{.*?\}\s*\]'
+            matches = re.search(json_pattern, response_content, re.DOTALL)
+            if matches:
+                try:
+                    json_str = matches.group(0)
+                    logger.info(f"Found JSON-like content, attempting to parse: {json_str[:100]}...")
+                    data = json.loads(json_str)
+                    if isinstance(data, list) and len(data) > 0:
+                        logger.info(f"Successfully extracted {len(data)} products using regex")
+                        # Process these products with the same validation logic as above
+                        valid_products = []
+                        for product in data:
+                            if not isinstance(product, dict):
+                                continue
+                                
+                            # Allow both product_title and name fields
+                            if 'product_title' in product:
+                                product_title = product['product_title']
+                            elif 'name' in product:
+                                product_title = product['name']
+                                product['product_title'] = product_title  # Standardize field name
+                            else:
+                                continue  # Skip if no title found
+                                
+                            # Basic validation of URL
+                            if product.get('url') and product['url'].startswith('https://www.target.com/'):
+                                valid_products.append(product)
+                                
+                        if valid_products:
+                            logger.info(f"Returning {len(valid_products)} products after fallback parsing")
+                            return valid_products[:max_results]
+                except Exception as parse_e:
+                    logger.error(f"Error in fallback JSON parsing: {parse_e}")
+            
             return []
         
     except Exception as e:
