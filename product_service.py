@@ -216,14 +216,28 @@ For the URL field, only use real, valid Target product URLs from your search res
     try:
         logger.info(f"Searching for products with query: '{query}'")
         
-        # Simplify the API call to only essential parameters
-        response = await client.chat.completions.create(
-            model="gpt-4o-search-preview",
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": f"Find Target products for: {query} site:target.com"}
-            ]
-        )
+        # Using Chat Completions API with the search model
+        query_string = f"Find Target products for: {query} site:target.com"
+        
+        # First try with the search-preview model
+        try:
+            response = await client.chat.completions.create(
+                model="gpt-4o-search-preview",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": query_string}
+                ]
+            )
+        except Exception as e:
+            logger.warning(f"Error with search model, falling back to regular GPT-4o: {e}")
+            # If the search model fails, fall back to standard model
+            response = await client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": query_string}
+                ]
+            )
         
         # Extract products
         message_content = response.choices[0].message.content
@@ -270,18 +284,23 @@ For the URL field, only use real, valid Target product URLs from your search res
                 if not isinstance(product, dict):
                     continue
                 
-                # Validate required fields
-                if not all(k in product for k in ['product_title', 'url']):
-                    continue
+                # Allow both product_title and name fields
+                if 'product_title' in product:
+                    product_title = product['product_title']
+                elif 'name' in product:
+                    product_title = product['name']
+                    product['product_title'] = product_title  # Standardize field name
+                else:
+                    continue  # Skip if no title found
                 
                 # Validate URL format
                 url = product.get('url', '')
                 if not url.startswith('https://www.target.com/'):
                     # Try to find a matching URL in citations
-                    product_title = product.get('product_title', '').lower()
+                    product_title_lower = product_title.lower()
                     for citation in citations:
                         if (citation['url'].startswith('https://www.target.com/') and 
-                            (product_title in citation['title'].lower() if citation['title'] else False)):
+                            citation.get('title') and product_title_lower in citation['title'].lower()):
                             url = citation['url']
                             product['url'] = url
                             logger.info(f"Replaced invalid URL with citation URL: {url}")
@@ -316,8 +335,8 @@ For the URL field, only use real, valid Target product URLs from your search res
             
             return valid_products[:max_results]
             
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse JSON response: {response_content}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e} - Content: {response_content}")
             return []
         
     except Exception as e:
