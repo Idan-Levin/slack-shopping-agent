@@ -31,7 +31,6 @@ class AddItemInput(BaseModel):
     quantity: int = Field(description="The number of units of the product to add")
     price: Optional[float] = Field(description="The price per unit of the product, if known. Should be a number, not string.")
     url: Optional[str] = Field(description="The URL of the product page, if known")
-    image_url: Optional[str] = Field(description="The URL of the product image, if known")
     final_url: Optional[str] = Field(description="The final URL after redirects, if different from the original URL", default=None)
 
 class SearchProductsInput(BaseModel):
@@ -48,44 +47,46 @@ class DeleteItemInput(BaseModel):
 
 # --- Tool Definitions ---
 
-class GetProductDetailsTool(BaseTool):
+class GetProductDetailsFromURLTool(BaseTool):
     name: str = "get_product_details_from_url"
-    description: str = "Use this tool ONLY when you are given a specific target.com product URL. It extracts the product's title, price, and image URL from the webpage."
-    args_schema: Type[BaseModel] = GetProductDetailsInput
-
+    description: str = "Use this tool ONLY when you are given a specific target.com product URL. It extracts the product's title, price, and other details from the webpage."
+    
     def _run(self, url: str) -> str:
+        loop = asyncio.get_event_loop() if hasattr(asyncio, "get_event_loop") else None
+        if not loop:
+            # Create a new event loop if one doesn't exist
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
         logger.info(f"Tool {self.name} called with URL: {url}")
         # LangChain Tools run synchronously by default. Need to run async playwright code.
         try:
-            # Run the async function in the current event loop if available, or create a new one
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
+            # Validate the URL format
+            if not url.startswith("https://www.target.com/p/"):
+                return "Error: URL must be a valid Target product page (starting with https://www.target.com/p/)"
+            
+            # Scrape product data asynchronously
             product_data = loop.run_until_complete(scrape_target_url(url))
-
+            
             if product_data and product_data.get("title") not in [None, "Title not found"]:
-                 # Ensure price is float or None before returning
-                 price_val = product_data.get('price')
-                 if isinstance(price_val, str):
-                     try:
-                         price_val = float(price_val.replace('$',''))
-                     except (ValueError, TypeError):
-                         price_val = None
+                # Ensure price is float or None before returning
+                price_val = product_data.get('price')
+                if isinstance(price_val, str):
+                    try:
+                        price_val = float(price_val.replace('$',''))
+                    except (ValueError, TypeError):
+                        price_val = None
 
-                 # Return structured data as a JSON string for the agent to parse easily
-                 result_dict = {
-                     "title": product_data.get('title', 'N/A'),
-                     "price": price_val,
-                     "image_url": product_data.get('image_url'),
-                     "original_url": url,
-                     "final_url": product_data.get('url', url)  # Use the final URL after redirects
-                 }
-                 # Return as string for the LLM. JSON format might be easier for it.
-                 # return f"Successfully scraped: Title='{result_dict['title']}', Price={result_dict['price']}, ImageURL='{result_dict['image_url']}', OriginalURL='{url}'"
-                 return json.dumps(result_dict)
+                # Return structured data as a JSON string for the agent to parse easily
+                result_dict = {
+                    "title": product_data.get('title', 'N/A'),
+                    "price": price_val,
+                    "original_url": url,
+                    "final_url": product_data.get('url', url)  # Use the final URL after redirects
+                }
+                # Return as string for the LLM. JSON format might be easier for it.
+                # return f"Successfully scraped: Title='{result_dict['title']}', Price={result_dict['price']}, OriginalURL='{url}'"
+                return json.dumps(result_dict)
 
             else:
                 # If we couldn't extract product details directly, try searching for the product name from the URL
@@ -102,12 +103,11 @@ class GetProductDetailsTool(BaseTool):
                         search_results = loop.run_until_complete(search_products_gpt(product_keywords))
                         
                         if search_results and len(search_results) > 0:
-                            logger.info(f"Found alternative product through search: {search_results[0].get('name')}")
+                            logger.info(f"Found alternative product through search: {search_results[0].get('product_title')}")
                             # Return the first search result
                             return json.dumps({
-                                "title": search_results[0].get('name'),
+                                "title": search_results[0].get('product_title'),
                                 "price": search_results[0].get('price'),
-                                "image_url": search_results[0].get('image_url'),
                                 "original_url": url,
                                 "final_url": search_results[0].get('url'),
                                 "note": "Original URL failed, found similar product through search"
@@ -117,8 +117,8 @@ class GetProductDetailsTool(BaseTool):
                 
                 return "Error: Could not extract valid product details from the URL. It might be invalid, out of stock, or the page structure changed."
         except Exception as e:
-            logger.error(f"Error in {self.name} tool scraping {url}: {e}", exc_info=True)
-            return f"Error: An exception occurred while trying to scrape the URL: {e}"
+            logger.error(f"Error in get_product_details_from_url tool: {e}", exc_info=True)
+            return f"Error: An exception occurred while processing URL {url}: {str(e)}"
 
     # If using async agents fully:
     # async def _arun(self, url: str) -> str:
@@ -173,7 +173,7 @@ class AddItemTool(BaseTool):
     description: str = "Use this tool to add a specific product with its quantity to the user's weekly shopping list. Only use AFTER confirming the product details AND quantity with the user."
     args_schema: Type[BaseModel] = AddItemInput
 
-    def _run(self, user_id: str, user_name: str, product_title: str, quantity: int, price: Optional[float] = None, url: Optional[str] = None, image_url: Optional[str] = None, final_url: Optional[str] = None) -> str:
+    def _run(self, user_id: str, user_name: str, product_title: str, quantity: int, price: Optional[float] = None, url: Optional[str] = None, final_url: Optional[str] = None) -> str:
         logger.info(f"Tool {self.name} called for user {user_id} ({user_name}) to add '{product_title}', Qty: {quantity}")
         if not isinstance(quantity, int) or quantity <= 0:
              return f"Error: Invalid quantity '{quantity}'. Quantity must be a positive whole number."
@@ -196,8 +196,7 @@ class AddItemTool(BaseTool):
                 title=product_title,
                 quantity=quantity,
                 price=price,
-                url=product_url,
-                image_url=image_url
+                url=product_url
             )
             return f"Success! Added {quantity} x '{product_title}' to the shopping list for {user_name} (Item ID: {item_id})."
         except Exception as e:
@@ -356,7 +355,7 @@ class DeleteItemTool(BaseTool):
 
 # List of tools for the agent executor
 tools = [
-    GetProductDetailsTool(),
+    GetProductDetailsFromURLTool(),
     SearchProductsTool(),
     AddItemTool(),
     ViewListTool(),

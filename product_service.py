@@ -63,7 +63,7 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
     """Scrapes product details from a Target URL using Playwright."""
     logger.info(f"Attempting to scrape URL: {url}")
-    product_info: Dict[str, Any] = {"url": url, "title": None, "price": None, "image_url": None}
+    product_info: Dict[str, Any] = {"url": url, "title": None, "price": None}
     browser = None # Initialize browser variable
 
     # New York location data
@@ -80,94 +80,89 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
     ]
 
     try:
-        async with async_playwright() as p:
-            # Launch browser (consider persisting browser instance for multiple scrapes if needed)
-            try:
-                 browser = await p.chromium.launch(
-                     # headless=False, # Uncomment for debugging locally to see browser
-                     args=["--disable-blink-features=AutomationControlled"] # Try to appear less like an automated agent
-                 )
-            except PlaywrightError as launch_error:
-                logger.error(f"Failed to launch playwright browser: {launch_error}")
-                return None # Cannot proceed without browser
-
-            # Create a context with New York location
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                # headless=False,  # Set to False for debugging
+                # args=['--disable-web-security', '--disable-features=site-per-process']
+            )
+            # Add a longer timeout for potentially slow pages
             context = await browser.new_context(
                 user_agent=USER_AGENT,
-                extra_http_headers=NY_HEADERS
+                locale="en-US",
+                viewport={"width": 1920, "height": 1080},
+                bypass_csp=True
             )
-            
-            # Add cookies for New York location
-            await context.add_cookies(NY_COOKIES)
-            
-            # Create page using the context
+
+            # Set location headers and cookies for New York
+            await context.set_extra_http_headers(NY_HEADERS)
             page = await context.new_page()
-            
-            await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})") # Further attempt to hide automation
+            for cookie in NY_COOKIES:
+                await page.add_cookie(cookie)
 
-            logger.debug(f"Navigating to {url}")
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=25000) # Increased timeout
-            
-            # Capture the final URL after any redirects
-            final_url = page.url
-            if final_url != url:
-                logger.info(f"URL redirected from {url} to {final_url}")
-                product_info["url"] = final_url  # Update with the actual final URL
-            
-            # Wait for a key element (like price or title) to be present before proceeding
-            # Adjust selector and timeout as needed
+            # Prepare for handling potential bot detection or redirects
+            await page.route("**/*", lambda route: route.continue_() if not route.request.url.startswith("data:") else route.abort())
+
+            # Set a generous timeout
+            page_timeout = 30000  # 30 seconds for page load, increase if needed for slower connections
             try:
-                await page.wait_for_selector(TARGET_SELECTORS["price"], timeout=10000)
-                logger.debug("Price element found, proceeding with scraping.")
-            except PlaywrightError:
-                logger.warning(f"Timed out waiting for price element on {final_url}. Page might not have loaded correctly or structure changed.")
-                # Attempt to get content anyway, might still work for title/image
-                # Consider taking a screenshot here for debugging: await page.screenshot(path='debug_screenshot.png')
-
-            html_content = await page.content()
-            # logger.debug(f"Page content length for {url}: {len(html_content)}") # Debug page load
-
-            # Close page and browser promptly
-            await page.close()
-            await context.close()
-            await browser.close()
-            browser = None # Ensure browser is marked as closed
-
-            # --- Parsing with BeautifulSoup ---
-            soup = BeautifulSoup(html_content, 'html.parser')
-
-            # Extract Title
-            title_element = soup.select_one(TARGET_SELECTORS["title"])
-            product_info["title"] = title_element.get_text(strip=True) if title_element else "Title not found"
-
-            # Extract Price - Complex due to variations (sale, range, currency symbol)
-            price_element = soup.select_one(TARGET_SELECTORS["price"])
-            if price_element:
-                price_text = price_element.get_text(strip=True).replace("$", "").split(" ")[0] # Basic cleaning
-                # Try to handle price ranges (e.g., "5.99 - 9.99", take the first one)
-                price_text = price_text.split('-')[0].strip()
+                await page.goto(url, wait_until="domcontentloaded", timeout=page_timeout)
+                # Wait for critical content to be visible
+                title_wait_timeout = 10000  # 10 seconds for title element - adjust if needed
                 try:
-                    product_info["price"] = float(price_text)
-                except (ValueError, TypeError):
-                    logger.warning(f"Could not parse price from text: '{price_text}' on {final_url}")
-                    product_info["price"] = None # Set to None if parsing fails
-            else:
-                 logger.warning(f"Price element not found using selector '{TARGET_SELECTORS['price']}' on {final_url}")
-                 product_info["price"] = None
+                    await page.wait_for_selector(TARGET_SELECTORS["title"], timeout=title_wait_timeout)
+                except Exception as wait_error:
+                    logger.warning(f"Timeout waiting for title selector on {url}: {wait_error}")
+                    # Continue anyway - we'll check what we got
 
+                # Check if we were redirected (e.g., product not available)
+                final_url = page.url
+                product_info['url'] = final_url
 
-            # Extract Image URL
-            image_element = soup.select_one(TARGET_SELECTORS["image"])
-            product_info["image_url"] = image_element.get('src') if image_element and image_element.get('src') else None
+                # If we're redirected away from a product page, that's a sign the product isn't available
+                if '/p/' not in final_url:
+                    logger.warning(f"URL {url} redirected to non-product page: {final_url}")
+                    return None  # Product not found or not available
 
+                # Get the page content for parsing
+                content = await page.content()
+                # Now let's parse with BeautifulSoup for more reliable extraction
+                soup = BeautifulSoup(content, 'html.parser')
 
-            logger.info(f"Scraped data for {final_url}: Title='{product_info['title']}', Price={product_info['price']}")
+                # Extract Title
+                title_element = soup.select_one(TARGET_SELECTORS["title"])
+                product_info["title"] = title_element.get_text(strip=True) if title_element else "Title not found"
 
-            # Basic validation: return None if essential info is missing
-            if product_info["title"] in [None, "Title not found"] and product_info["price"] is None:
-                 logger.error(f"Failed to extract essential data (title, price) from {final_url}. Returning None.")
+                # Extract Price - handle different possible formats
+                price_element = soup.select_one(TARGET_SELECTORS["price"])
+
+                if price_element:
+                    price_text = price_element.get_text(strip=True).replace("$", "").split(" ")[0] # Basic cleaning
+                    # Try to handle price ranges (e.g., "5.99 - 9.99", take the first one)
+                    price_text = price_text.split('-')[0].strip()
+                    try:
+                        product_info["price"] = float(price_text)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Could not parse price from text: '{price_text}' on {final_url}")
+                        product_info["price"] = None # Set to None if parsing fails
+                else:
+                     logger.warning(f"Price element not found using selector '{TARGET_SELECTORS['price']}' on {final_url}")
+                     product_info["price"] = None
+
+                logger.info(f"Scraped data for {final_url}: Title='{product_info['title']}', Price={product_info['price']}")
+
+                # Basic validation: return None if essential info is missing
+                if product_info["title"] in [None, "Title not found"] and product_info["price"] is None:
+                     logger.error(f"Failed to extract essential data (title, price) from {final_url}. Returning None.")
+                     return None
+                return product_info
+
+            except PlaywrightError as pe:
+                 logger.error(f"Playwright error navigating to {url}: {pe}")
                  return None
-            return product_info
+
+        # If we reach here, something unexpected happened
+        logger.error(f"Unexpected flow in scraping {url} - reached end of try block without return")
+        return None  # Explicit return None for clarity
 
     except PlaywrightError as pe:
          logger.error(f"Playwright error scraping {url}: {pe}", exc_info=True)
@@ -182,229 +177,165 @@ async def scrape_target_url(url: str) -> Optional[Dict[str, Any]]:
 
 
 # --- AI Search ---
-async def search_products_gpt(query: str) -> Optional[List[Dict[str, Any]]]:
-    """Uses OpenAI GPT with web search to find accurate product information based on a query."""
-    logger.info(f"Performing AI product search with web search for query: '{query}'")
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        logger.error("OpenAI API key not configured for search.")
-        return None
+def search_products_gpt(query: str, max_results: int = 3) -> List[Dict[str, Any]]:
+    """
+    Search for products using GPT-4o with web search capabilities
+    Returns a list of products with their details
+    """
+    from openai import OpenAI
+    import os
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        logger.error("OPENAI_API_KEY not found in environment")
+        return []
+
+    client = OpenAI(api_key=api_key)
+    
+    system_message = """You are a Target shopping assistant that helps users find products on target.com.
+For each search query, use the web search tools to find relevant products from Target's website.
+Always return information in the following JSON format:
+
+[
+  {
+    "product_title": "Product name",
+    "price": price as a number (e.g. 9.99),
+    "url": "Valid URL to the product page on target.com",
+    "in_stock": true or false
+  },
+  ...
+]
+
+Only include the fields shown above. Do not include additional fields.
+Only include products from Target. Products must be actually available on target.com.
+Return JSON array with at most 3 products. If no products are found, return an empty array [].
+
+For the URL field, only use real, valid Target product URLs from your search results.
+"""
 
     try:
-        # Use the newer client method if openai version >= 1.0
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=openai_api_key)
-
-        response = await client.chat.completions.create(
-            model="gpt-4o-search-preview",  # Use the full model with better web search capabilities
-            web_search_options={
-                "search_context_size": "medium",  # Balance between quality and cost
-                "user_location": {
-                    "type": "approximate",
-                    "approximate": {
-                        "country": "US",
-                        "city": "New York",
-                        "region": "New York"
+        logger.info(f"Searching for products with query: '{query}'")
+        
+        completion = client.chat.completions.create(
+            model="gpt-4o-search-preview",
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": f"Find Target products for: {query}"}
+            ],
+            max_tokens=1500,
+            temperature=0,
+            response_format={"type": "json_object"},
+            tools=[
+                {
+                    "type": "web_search",
+                    "web_search": {
+                        "enable_websearch": True,
+                        "search_inputs": {
+                            "query_transformation_mode": "none",
+                            "search_query": f"Target products {query} site:target.com"
+                        },
+                        "enforce_citations": True,
+                        "result_format": "markdown_with_annotations",
+                        "search_context": "You are searching for products on target.com - make sure to search for the exact product the user requested. Filter to only target.com results. Look for current prices and stock information.",
+                        "user_location": {
+                            "country_code": "US"
+                        }
                     }
                 }
-            },
-            messages=[
-                {
-                    "role": "system",
-                    "content": """You are a product search assistant that finds accurate Target products.
-                    Search the web to find REAL and CURRENT products available at Target (target.com).
-                    For each product (max 3), provide ONLY the following information in a JSON list format:
-                    - name: The product name exactly as shown on Target.com.
-                    - price: The current price as a number (e.g., 10.99). Use null if unknown.
-                    - url: The EXACT and VALID URL to the product page on target.com. 
-                    - image_url: The direct URL to the product image. Use null if unavailable.
-                    - in_stock: Boolean (true/false) or null, indicating if the product is in stock.
-
-                    CRITICAL: Use web search to find REAL target.com URLs. Do not generate URLs.
-                    Return ONLY the JSON list. Example format:
-                    [
-                      { "name": "Tide PODS Laundry Detergent Pacs - Spring Meadow (81 Count)", "price": 21.49, "url": "https://www.target.com/p/tide-pods-laundry-detergent-pacs-spring-meadow-81ct/-/A-50570157", "image_url": "https://target.scene7.com/is/image/Target/GUEST_44e47f56-ea5b-4b60-ae9a-bad46af9dcff", "in_stock": true },
-                      { "name": "Example Product B", "price": null, "url": "https://www.target.com/p/actual-product-url", "image_url": null, "in_stock": null }
-                    ]
-                    If you cannot find relevant items at Target, return an empty list [].
-                    """,
-                },
-                {"role": "user", "content": f"Find current products at Target for: {query}. Make sure to use the web search to find REAL products with VALID URLs."},
             ]
         )
-
-        message_content = response.choices[0].message.content
-        if not message_content:
-            logger.error("AI search returned empty content.")
-            return None
-        content = message_content.strip()
-
-        logger.debug(f"Raw OpenAI response content for '{query}': {content}")
         
-        # Extract citation information if available
+        # Extract products
+        response_content = completion.choices[0].message.content
+        logger.debug(f"GPT response: {response_content}")
+        
+        # Extract URL citations if available
         citations = []
-        if hasattr(response.choices[0].message, 'annotations'):
-            annotations = response.choices[0].message.annotations
-            if annotations:
-                for annotation in annotations:
-                    if annotation.type == 'url_citation':
-                        citations.append({
-                            'url': annotation.url_citation.url,
-                            'title': annotation.url_citation.title
-                        })
-                logger.info(f"Search returned {len(citations)} citations")
-
-        # The response might not be perfectly formatted JSON, so we need to extract it
-        # Look for JSON list pattern in the content
-        json_pattern = r'\[\s*\{.*?\}\s*\]'
-        import re
-        json_match = re.search(json_pattern, content, re.DOTALL)
+        if hasattr(completion.choices[0].message, 'annotations'):
+            for annotation in completion.choices[0].message.annotations:
+                if annotation.type == 'url_citation':
+                    citation_info = {
+                        'text': annotation.text,
+                        'url': annotation.url,
+                        'title': annotation.title if hasattr(annotation, 'title') else None
+                    }
+                    citations.append(citation_info)
+                    logger.debug(f"Found citation: {citation_info}")
         
-        if json_match:
-            try:
-                json_str = json_match.group(0)
-                data = json.loads(json_str)
-                logger.info(f"Successfully extracted JSON data from response")
-                products = data if isinstance(data, list) else [data]
-            except json.JSONDecodeError:
-                logger.warning(f"Found JSON-like content but failed to parse: {json_str}")
-                # Fall back to full content parsing
-                data = None
-        else:
-            logger.warning("No JSON list pattern found in response, attempting to parse full content")
-            data = None
-            
-        # If JSON extraction failed, try parsing the full content
-        if data is None:
-            try:
-                # Attempt to parse the JSON directly
-                data = json.loads(content)
-                
-                products = []
-                
-                # Case 1: Response is a list of products
-                if isinstance(data, list):
-                    products = data
-                # Case 2: Response is a dict with a list under "results" or "products" key
-                elif isinstance(data, dict) and isinstance(data.get("results"), list):
-                    products = data["results"]
-                elif isinstance(data, dict) and isinstance(data.get("products"), list):
-                    products = data["products"]
-                # Case 3: Response is a single product object (not in a list)
-                elif isinstance(data, dict) and 'name' in data and 'url' in data:
-                    products = [data]
-                    logger.info(f"AI search returned a single product object, converting to list: {data}")
-                else:
-                    logger.error(f"AI search returned JSON, but not in the expected format: {content}")
-                    # Last resort - try to extract JSON from text with regex
-                    products = []
-            except json.JSONDecodeError as json_e:
-                logger.error(f"Failed to decode JSON from AI response for query '{query}': {json_e}. Raw response: {content}")
-                # Sometimes models add ```json ... ``` markdown, try stripping it
-                if content.startswith("```json"):
-                    content = content[7:]
-                if content.endswith("```"):
-                    content = content[:-3]
-                content = content.strip()
-                try: # Retry parsing after stripping markdown
-                    data = json.loads(content)
-                    # Repeat list extraction logic
-                    if isinstance(data, list): 
-                        products = data
-                    elif isinstance(data, dict) and isinstance(data.get("results"), list): 
-                        products = data["results"]
-                    elif isinstance(data, dict) and isinstance(data.get("products"), list): 
-                        products = data["products"]
-                    else:
-                        # Try to find any array in the content
-                        array_match = re.search(r'\[(.*)\]', content, re.DOTALL)
-                        if array_match:
-                            try:
-                                products = json.loads(array_match.group(0))
-                                if not isinstance(products, list):
-                                    products = []
-                            except:
-                                products = []
-                        else:
-                            products = []
-                except:
-                    logger.error(f"Failed all attempts to parse response as JSON for query '{query}'")
-                    products = []
-
-        if len(products) > 0:
-            logger.info(f"AI Search successful for '{query}', found {len(products)} potential products.")
-            # Basic validation/cleaning of results
-            validated_products = []
-            
-            # Validate all URLs concurrently
-            validation_tasks = []
-            for i, p in enumerate(products):
-                if isinstance(p, dict) and 'name' in p:
-                    # Ensure price is float or None
-                    if 'price' in p and p['price'] is not None and not isinstance(p['price'], (int, float)):
-                        try:
-                            p['price'] = float(str(p['price']).replace('$',''))
-                        except (ValueError, TypeError):
-                            p['price'] = None
-                    
-                    # URLs are expected to be reliable but still need validation
-                    if 'url' in p and isinstance(p['url'], str):
-                        # Fix common URL issues
-                        if p['url'].startswith("www.target.com"):
-                            p['url'] = "https://" + p['url']
-                        elif p['url'].startswith("target.com"):
-                            p['url'] = "https://www." + p['url']
-                            
-                        # Only validate if it has the right URL format
-                        if p['url'].startswith("https://www.target.com"):
-                            validation_tasks.append((i, validate_target_url(p['url'])))
-                        else:
-                            logger.warning(f"URL format doesn't match Target product URL: {p.get('url')}")
-                            p['url'] = None
-                            validated_products.append(p)
-                    else:
-                        p['url'] = None
-                        validated_products.append(p)
-                else:
-                    logger.warning(f"Skipping invalid product structure from AI for query '{query}': {p}")
-            
-            # Wait for all validation tasks to complete
-            if validation_tasks:
-                validation_results = await asyncio.gather(*[task for _, task in validation_tasks])
-                
-                # Add products with valid URLs to the result
-                valid_url_count = 0
-                for i, (product_idx, _) in enumerate(validation_tasks):
-                    is_valid = validation_results[i]
-                    product = products[product_idx]
-                    
-                    if is_valid:
-                        valid_url_count += 1
-                        validated_products.append(product)
-                    else:
-                        # Keep the product but mark the URL as invalid
-                        logger.warning(f"Invalid Target URL found and marked as None: {product.get('url')}")
-                        product['url'] = None
-                        validated_products.append(product)
-                
-                logger.info(f"URL validation complete: {valid_url_count} valid URLs out of {len(validation_tasks)} tested")
-            
-            # If no products have valid URLs but we have validated products, return them anyway
-            if validated_products:
-                logger.info(f"Returning {len(validated_products)} products, some may have invalid URLs")
-                return validated_products
-            # Fall back to products without URL validation as a last resort
-            elif products:
-                logger.warning(f"No products with valid URLs found, returning unvalidated products as fallback")
-                return products
+        # Try to parse the JSON response
+        try:
+            # For newer response format
+            data = json.loads(response_content)
+            if 'products' in data:
+                products = data['products']
             else:
-                logger.warning(f"No valid products found for query '{query}'")
-                return []
-        else:
-            # No products found
-            logger.warning(f"AI search found no products for query '{query}'")
+                products = data
+                
+            # If products is not a list, try to handle other formats
+            if not isinstance(products, list):
+                if isinstance(products, dict) and any(key.startswith('product') for key in products.keys()):
+                    # Handle case where it's a single product as dict
+                    products = [products]
+                else:
+                    logger.warning(f"Unexpected product format: {products}")
+                    products = []
+            
+            # Process and validate each product
+            valid_products = []
+            for product in products:
+                if not isinstance(product, dict):
+                    continue
+                
+                # Validate required fields
+                if not all(k in product for k in ['product_title', 'url']):
+                    continue
+                
+                # Validate URL format
+                url = product.get('url', '')
+                if not url.startswith('https://www.target.com/'):
+                    # Try to find a matching URL in citations
+                    product_title = product.get('product_title', '').lower()
+                    for citation in citations:
+                        if (citation['url'].startswith('https://www.target.com/') and 
+                            (product_title in citation['title'].lower() if citation['title'] else False)):
+                            url = citation['url']
+                            product['url'] = url
+                            logger.info(f"Replaced invalid URL with citation URL: {url}")
+                            break
+                    
+                    # If still not valid, skip this product
+                    if not product['url'].startswith('https://www.target.com/'):
+                        logger.warning(f"Skipping product with invalid URL: {product}")
+                        continue
+                
+                # Format price as float
+                if 'price' in product:
+                    try:
+                        if isinstance(product['price'], str):
+                            # Remove currency symbols and convert to float
+                            price_str = product['price'].replace('$', '').replace(',', '')
+                            product['price'] = float(price_str)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid price format: {product['price']}")
+                        product['price'] = None
+                else:
+                    product['price'] = None
+                
+                # Ensure in_stock is boolean
+                if 'in_stock' in product:
+                    if isinstance(product['in_stock'], str):
+                        product['in_stock'] = product['in_stock'].lower() == 'true'
+                else:
+                    product['in_stock'] = True  # Default to True if not specified
+                
+                valid_products.append(product)
+            
+            return valid_products[:max_results]
+            
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse JSON response: {response_content}")
             return []
-
+        
     except Exception as e:
-        logger.error(f"Unexpected error during OpenAI search for '{query}': {e}", exc_info=True)
-        return None
+        logger.error(f"Error in search_products_gpt: {str(e)}")
+        return []

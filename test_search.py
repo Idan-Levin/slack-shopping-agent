@@ -4,15 +4,24 @@ import asyncio
 import os
 import json
 import logging
+import sys
 from dotenv import load_dotenv
 from product_service import search_products_gpt, validate_target_url
 
-# Setup logging
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
 )
-logger = logging.getLogger("test_search")
+logger = logging.getLogger(__name__)
+
+# Add the parent directory to the path so we can import the module
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -56,7 +65,6 @@ async def test_search(query):
             else:
                 logger.info(f"  URL: None")
                 
-            logger.info(f"  Image URL: {product.get('image_url') or 'None'}")
             logger.info(f"  In Stock: {product.get('in_stock')}")
             
         # Validate URLs
