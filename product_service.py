@@ -25,7 +25,7 @@ if not os.getenv("OPENAI_API_KEY"):
 async def validate_target_url(url: str, skip_http_check: bool = False) -> bool:
     """
     Validate that a URL is a valid Target product URL.
-    Now with option to skip HTTP validation and only check format.
+    Now with option to skip HTTP check and only check format.
     """
     import re
     import aiohttp
@@ -218,7 +218,7 @@ async def search_products_gpt(query: str, max_results: int = 3) -> List[Dict[str
         return []
 
     # Since we're having issues with URL validation, let's be more permissive
-    # Set this to True to skip HTTP validation and only check URL format
+    # Set this to True to skip HTTP validation and only check format
     SKIP_URL_HTTP_VALIDATION = True
 
     client = AsyncOpenAI(api_key=api_key)
@@ -250,14 +250,30 @@ For the URL field, only use real, valid Target product URLs from your search res
         # Using Chat Completions API with the search model
         query_string = f"Find Target products for: {query} site:target.com"
         
-        # First try with the search-preview model
+        # First try with the search-preview model with explicit web search tools
         try:
+            # Define web search tool with user location and context size
+            web_search_tool = {
+                "type": "web_search_preview",
+                "search_context_size": "high",  # Use high context for better results
+                "user_location": {
+                    "type": "approximate",
+                    "country": "US",
+                    "city": "Minneapolis",  # Target is headquartered in Minneapolis
+                    "region": "Minnesota"
+                }
+            }
+            
+            logger.info("Using web_search_preview tool with high context")
             response = await client.chat.completions.create(
                 model="gpt-4o-search-preview",
                 messages=[
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": query_string}
-                ]
+                ],
+                tools=[web_search_tool],
+                tool_choice={"type": "web_search_preview"},  # Force using web search
+                temperature=0.7  # Add some variability in results
             )
         except Exception as e:
             logger.warning(f"Error with search model, falling back to regular GPT-4o: {e}")
