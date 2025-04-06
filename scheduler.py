@@ -89,12 +89,12 @@ def setup_scheduler(client: AsyncWebClient):
     scheduler = AsyncIOScheduler(timezone=scheduler_timezone)
 
     try:
-        # For testing: Schedule a notification at 12:52 PM Israel time today
+        # For testing: Schedule a notification at 12:55 PM Israel time today
         test_time = datetime.now()
-        # Set hour to 12 and minute to 52
-        test_time = test_time.replace(hour=12, minute=52, second=0, microsecond=0)
+        # Set hour to 12 and minute to 55
+        test_time = test_time.replace(hour=12, minute=55, second=0, microsecond=0)
         
-        # Add the test job to trigger at 12:52 PM
+        # Add the test job to trigger at 12:55 PM
         scheduler.add_job(
             send_weekly_reminder,
             'date',  # Use date trigger for a one-time execution
@@ -113,7 +113,7 @@ def setup_scheduler(client: AsyncWebClient):
             replace_existing=True
         )
         
-        logger.info(f"Added test reminder scheduled for today at 12:52 PM Israel time: {test_time}")
+        logger.info(f"Added test reminder scheduled for today at 12:55 PM Israel time: {test_time}")
         logger.info(f"Added immediate test message scheduled for 10 seconds from now")
         
         # Keep the regular weekly schedule as well
