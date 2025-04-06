@@ -216,6 +216,7 @@ For the URL field, only use real, valid Target product URLs from your search res
     try:
         logger.info(f"Searching for products with query: '{query}'")
         
+        # Use web_search_options instead of tools parameter
         response = await client.chat.completions.create(
             model="gpt-4o-search-preview",
             messages=[
@@ -225,11 +226,9 @@ For the URL field, only use real, valid Target product URLs from your search res
             max_tokens=1500,
             temperature=0,
             response_format={"type": "json_object"},
-            tools=[
-                {
-                    "type": "web_search",
-                }
-            ]
+            web_search_options={
+                "search_context_size": "medium"
+            }
         )
         
         # Extract products
