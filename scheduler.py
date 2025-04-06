@@ -336,17 +336,9 @@ def setup_scheduler(client: AsyncWebClient):
             replace_existing=True
         )
         
-        # Schedule an immediate test message with a fresh client
-        scheduler.add_job(
-            send_test_message,
-            'date',
-            run_date=datetime.now() + timedelta(seconds=10),  # Run 10 seconds from now
-            id='immediate_test_message',
-            replace_existing=True
-        )
+        # Removed automatic test message on startup
         
         logger.info(f"Added test reminder scheduled for today at 12:55 PM Israel time: {test_time}")
-        logger.info(f"Added immediate test message scheduled for 10 seconds from now")
         
         # Keep the regular weekly schedule as well
         scheduler.add_job(
