@@ -157,6 +157,34 @@ def register_listeners(app: AsyncApp):
              return
 
         await ack("Processing order placement...")
+        
+        # Check if user is an admin
+        user_id = body.get("user_id")
+        if not user_id:
+            await say(text="Error: Could not identify the user.", thread_ts=body.get("thread_ts"))
+            return
+            
+        try:
+            user_info = await client.users_info(user=user_id)
+            is_admin = user_info.get("user", {}).get("is_admin", False)
+            
+            if not is_admin:
+                await client.chat_postEphemeral(
+                    channel=body.get("channel_id"),
+                    user=user_id,
+                    text="Sorry, only workspace admins can use the /order-placed command."
+                )
+                logger.warning(f"Non-admin user {user_id} attempted to use /order-placed")
+                return
+        except Exception as e:
+            logger.error(f"Error checking admin status: {e}")
+            await client.chat_postEphemeral(
+                channel=body.get("channel_id"),
+                user=user_id,
+                text="Error checking admin permissions. Please try again later."
+            )
+            return
+            
         items = get_active_items()
         if not items:
              await say(text="There were no active items on the list to mark as ordered.")
@@ -284,14 +312,20 @@ def register_listeners(app: AsyncApp):
             return
 
     @app.command("/schedule-reminder")
-    async def handle_schedule_reminder(ack: AsyncAck, body: dict, say: AsyncSay, client: AsyncWebClient, logger_from_context):
+    async def handle_schedule_reminder(ack: AsyncAck, body: dict, client: AsyncWebClient, logger_from_context):
         """Handle the /schedule-reminder command to schedule custom reminders."""
         await ack()  # Acknowledge the command immediately
         
         # Get the user ID to check if they're an admin
         user_id = body.get("user_id")
+        channel_id = body.get("channel_id")
+        
         if not user_id:
-            await say(text="Error: Could not identify the user. Please try again.")
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Error: Could not identify the user. Please try again."
+            )
             return
         
         # Check if the user is an admin
@@ -300,12 +334,20 @@ def register_listeners(app: AsyncApp):
             is_admin = user_info.get("user", {}).get("is_admin", False)
             
             if not is_admin:
-                await say(text="Sorry, only workspace admins can schedule reminders.")
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="Sorry, only workspace admins can schedule reminders."
+                )
                 logger_from_context.warning(f"Non-admin user {user_id} attempted to use /schedule-reminder")
                 return
         except Exception as e:
             logger_from_context.error(f"Error checking admin status: {e}")
-            await say(text="Error checking admin permissions. Please try again later.")
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Error checking admin permissions. Please try again later."
+            )
             return
         
         # Parse command text
@@ -326,15 +368,25 @@ def register_listeners(app: AsyncApp):
 
 *Days:* mon, tue, wed, thu, fri, sat, sun
 *Time:* 24-hour format (e.g., 14:30 for 2:30 PM)
+
+Use `/list-reminders` to see all scheduled reminders.
             """
-            await say(text=help_text)
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=help_text
+            )
             return
         
         # Parse command arguments
         args = command_text.split()
         
         if len(args) < 3:
-            await say(text="Error: Not enough arguments. Type `/schedule-reminder` for usage help.")
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Error: Not enough arguments. Type `/schedule-reminder` for usage help."
+            )
             return
         
         # Import the scheduler functions
@@ -354,7 +406,11 @@ def register_listeners(app: AsyncApp):
                     if not (0 <= hour <= 23 and 0 <= minute <= 59):
                         raise ValueError("Invalid time range")
                 except:
-                    await say(text="Error: Invalid time format. Please use HH:MM in 24-hour format.")
+                    await client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="Error: Invalid time format. Please use HH:MM in 24-hour format."
+                    )
                     return
                 
                 # Get current date
@@ -370,14 +426,28 @@ def register_listeners(app: AsyncApp):
                 
                 if job_id:
                     formatted_time = target_time.strftime("%Y-%m-%d %H:%M")
-                    await say(text=f"✅ One-time reminder scheduled for {formatted_time} (Israel time):\n> {message}")
+                    
+                    # Send ephemeral confirmation to admin
+                    await client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text=f"✅ One-time reminder scheduled for {formatted_time} (Israel time):\n> {message}"
+                    )
                 else:
-                    await say(text="Failed to schedule the reminder. Please try again.")
+                    await client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="Failed to schedule the reminder. Please try again."
+                    )
                 
             elif schedule_type == "weekly":
                 # Format: /schedule-reminder weekly day HH:MM message
                 if len(args) < 4:
-                    await say(text="Error: Not enough arguments for weekly reminder. Format: `/schedule-reminder weekly day HH:MM message`")
+                    await client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="Error: Not enough arguments for weekly reminder. Format: `/schedule-reminder weekly day HH:MM message`"
+                    )
                     return
                 
                 day_str = args[1].lower()
@@ -387,7 +457,11 @@ def register_listeners(app: AsyncApp):
                 # Convert day string to day_of_week number
                 day_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
                 if day_str not in day_map:
-                    await say(text="Error: Invalid day. Use mon, tue, wed, thu, fri, sat, or sun.")
+                    await client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="Error: Invalid day. Use mon, tue, wed, thu, fri, sat, or sun."
+                    )
                     return
                     
                 day_of_week = day_map[day_str]
@@ -398,7 +472,11 @@ def register_listeners(app: AsyncApp):
                     if not (0 <= hour <= 23 and 0 <= minute <= 59):
                         raise ValueError("Invalid time range")
                 except:
-                    await say(text="Error: Invalid time format. Please use HH:MM in 24-hour format.")
+                    await client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="Error: Invalid time format. Please use HH:MM in 24-hour format."
+                    )
                     return
                 
                 # Schedule the weekly reminder
@@ -415,13 +493,178 @@ def register_listeners(app: AsyncApp):
                 if job_id:
                     day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
                     day_name = day_names[day_of_week]
-                    await say(text=f"✅ Weekly reminder scheduled for every {day_name} at {hour:02d}:{minute:02d} (Israel time):\n> {message}")
+                    
+                    # Send ephemeral confirmation to admin
+                    await client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text=f"✅ Weekly reminder scheduled for every {day_name} at {hour:02d}:{minute:02d} (Israel time):\n> {message}"
+                    )
                 else:
-                    await say(text="Failed to schedule the weekly reminder. Please try again.")
+                    await client.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="Failed to schedule the weekly reminder. Please try again."
+                    )
             
             else:
-                await say(text=f"Error: Unknown schedule type '{schedule_type}'. Use 'once' or 'weekly'.")
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=f"Error: Unknown schedule type '{schedule_type}'. Use 'once' or 'weekly'."
+                )
         
         except Exception as e:
             logger_from_context.error(f"Error scheduling reminder: {e}", exc_info=True)
-            await say(text=f"Error scheduling reminder: {str(e)}")
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f"Error scheduling reminder: {str(e)}"
+            )
+
+    @app.command("/list-reminders")
+    async def handle_list_reminders(ack: AsyncAck, body: dict, client: AsyncWebClient, logger_from_context):
+        """Handle the /list-reminders command to view all scheduled reminders."""
+        await ack()  # Acknowledge the command immediately
+        
+        # Get the user ID to check if they're an admin
+        user_id = body.get("user_id")
+        channel_id = body.get("channel_id")
+        
+        if not user_id:
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Error: Could not identify the user. Please try again."
+            )
+            return
+        
+        # Check if the user is an admin
+        try:
+            user_info = await client.users_info(user=user_id)
+            is_admin = user_info.get("user", {}).get("is_admin", False)
+            
+            if not is_admin:
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="Sorry, only workspace admins can view scheduled reminders."
+                )
+                logger_from_context.warning(f"Non-admin user {user_id} attempted to use /list-reminders")
+                return
+        except Exception as e:
+            logger_from_context.error(f"Error checking admin status: {e}")
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Error checking admin permissions. Please try again later."
+            )
+            return
+        
+        # Import the scheduler
+        from scheduler import get_all_reminders
+        
+        try:
+            # Get all scheduled reminders
+            reminders = get_all_reminders()
+            
+            if not reminders:
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="There are no scheduled reminders."
+                )
+                return
+            
+            # Format the list of reminders
+            day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            now = datetime.now()
+            
+            reminder_blocks = [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "📆 Scheduled Reminders",
+                        "emoji": True
+                    }
+                },
+                {
+                    "type": "divider"
+                }
+            ]
+            
+            # Group reminders by type
+            one_time_reminders = []
+            weekly_reminders = []
+            
+            for job_id, reminder in reminders.items():
+                if reminder["type"] == "once":
+                    one_time_reminders.append((job_id, reminder))
+                elif reminder["type"] == "weekly":
+                    weekly_reminders.append((job_id, reminder))
+            
+            # Sort one-time reminders by date
+            one_time_reminders.sort(key=lambda x: x[1]["run_date"])
+            
+            # Sort weekly reminders by day of week then time
+            weekly_reminders.sort(key=lambda x: (x[1]["day_of_week"], x[1]["hour"], x[1]["minute"]))
+            
+            # Add one-time reminders
+            if one_time_reminders:
+                reminder_blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*⏰ One-time Reminders*"
+                    }
+                })
+                
+                for job_id, reminder in one_time_reminders:
+                    run_date = datetime.fromisoformat(reminder["run_date"])
+                    formatted_date = run_date.strftime("%Y-%m-%d %H:%M")
+                    
+                    reminder_blocks.append({
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"• *{formatted_date}* (ID: {job_id})\n> {reminder['message']}"
+                        }
+                    })
+            
+            # Add weekly reminders
+            if weekly_reminders:
+                reminder_blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*🔄 Weekly Reminders*"
+                    }
+                })
+                
+                for job_id, reminder in weekly_reminders:
+                    day_name = day_names[reminder["day_of_week"]]
+                    time_str = f"{reminder['hour']:02d}:{reminder['minute']:02d}"
+                    
+                    reminder_blocks.append({
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"• *Every {day_name} at {time_str}* (ID: {job_id})\n> {reminder['message']}"
+                        }
+                    })
+            
+            # Send the ephemeral message with blocks
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                blocks=reminder_blocks
+            )
+            
+        except Exception as e:
+            logger_from_context.error(f"Error listing reminders: {e}", exc_info=True)
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f"Error listing reminders: {str(e)}"
+            )

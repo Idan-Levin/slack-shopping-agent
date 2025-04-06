@@ -222,6 +222,16 @@ async def schedule_custom_reminder(
         logger.error(f"Error scheduling custom reminder: {e}", exc_info=True)
         return None
 
+def get_all_reminders():
+    """
+    Get all currently scheduled custom reminders.
+    
+    Returns:
+        dict: Dictionary of reminders mapped by job_id
+    """
+    global custom_reminders
+    return custom_reminders.copy()
+
 def save_custom_reminders():
     """Save custom reminders to a file for persistence."""
     try:
