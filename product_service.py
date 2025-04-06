@@ -185,6 +185,7 @@ async def search_products_gpt(query: str, max_results: int = 3) -> List[Dict[str
     from openai import AsyncOpenAI
     import os
     import re
+    from difflib import SequenceMatcher
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -248,18 +249,27 @@ For the URL field, only use real, valid Target product URLs from your search res
         response_content = message_content.strip()
         logger.debug(f"GPT response: {response_content}")
         
-        # Extract URL citations if available
-        citations = []
+        # --- FIRST EXTRACT ALL CITATIONS ---
+        # These are more reliable as they come directly from search results
+        target_citations = []
         if hasattr(response.choices[0].message, 'annotations'):
             for annotation in response.choices[0].message.annotations:
                 if annotation.type == 'url_citation':
-                    citation_info = {
-                        'text': annotation.text,
-                        'url': annotation.url,
-                        'title': annotation.title if hasattr(annotation, 'title') else None
-                    }
-                    citations.append(citation_info)
-                    logger.debug(f"Found citation: {citation_info}")
+                    url = annotation.url
+                    title = annotation.title if hasattr(annotation, 'title') else None
+                    
+                    # Only keep Target product URLs
+                    if url and url.startswith('https://www.target.com/p/'):
+                        citation_info = {
+                            'url': url,
+                            'title': title,
+                            'text': annotation.text if hasattr(annotation, 'text') else '',
+                            'used': False  # Track if this citation has been matched to a product
+                        }
+                        target_citations.append(citation_info)
+                        logger.info(f"Found Target citation: {title} - {url}")
+            
+            logger.info(f"Found {len(target_citations)} valid Target product citations")
         
         # Check if response is in markdown code block and extract JSON
         if response_content.startswith("```") and "```" in response_content[3:]:
@@ -269,6 +279,47 @@ For the URL field, only use real, valid Target product URLs from your search res
             if matches:
                 response_content = matches.group(1).strip()
                 logger.info(f"Extracted JSON from markdown code block: {response_content[:100]}...")
+        
+        # Function to find best matching citation for a product title
+        def find_best_citation_match(product_title):
+            if not target_citations:
+                return None
+                
+            best_score = 0
+            best_match = None
+            
+            product_title_lower = product_title.lower()
+            
+            # First try direct substring match
+            for citation in target_citations:
+                if citation['used']:
+                    continue
+                    
+                citation_title = citation.get('title', '')
+                if citation_title and (product_title_lower in citation_title.lower() or 
+                                      citation_title.lower() in product_title_lower):
+                    citation['used'] = True
+                    return citation
+            
+            # If no direct substring match, use sequence matcher
+            for citation in target_citations:
+                if citation['used']:
+                    continue
+                    
+                citation_title = citation.get('title', '')
+                if not citation_title:
+                    continue
+                    
+                score = SequenceMatcher(None, product_title_lower, citation_title.lower()).ratio()
+                if score > best_score and score > 0.6:  # 60% similarity threshold
+                    best_score = score
+                    best_match = citation
+            
+            if best_match:
+                best_match['used'] = True
+                logger.info(f"Matched product '{product_title}' with citation '{best_match['title']}' (similarity: {best_score:.2f})")
+            
+            return best_match
         
         # Try to parse the JSON response
         try:
@@ -303,23 +354,83 @@ For the URL field, only use real, valid Target product URLs from your search res
                 else:
                     continue  # Skip if no title found
                 
-                # Validate URL format
-                url = product.get('url', '')
-                if not url.startswith('https://www.target.com/'):
-                    # Try to find a matching URL in citations
-                    product_title_lower = product_title.lower()
-                    for citation in citations:
-                        if (citation['url'].startswith('https://www.target.com/') and 
-                            citation.get('title') and product_title_lower in citation['title'].lower()):
-                            url = citation['url']
-                            product['url'] = url
-                            logger.info(f"Replaced invalid URL with citation URL: {url}")
-                            break
+                # --- PRIORITY REVERSAL: First use citation URL, then fall back to JSON URL ---
+                # Try to find a matching citation first
+                matching_citation = find_best_citation_match(product_title)
+                
+                if matching_citation and matching_citation['url']:
+                    # Use the citation URL instead of the JSON URL
+                    original_url = product.get('url', 'none')
+                    product['url'] = matching_citation['url']
+                    logger.info(f"Using citation URL instead of original: {original_url} -> {matching_citation['url']}")
                     
-                    # If still not valid, skip this product
-                    if not product['url'].startswith('https://www.target.com/'):
-                        logger.warning(f"Skipping product with invalid URL: {product}")
-                        continue
+                    # Also validate the citation URL
+                    is_valid = await validate_target_url(matching_citation['url'])
+                    if not is_valid:
+                        logger.warning(f"Citation URL failed validation: {matching_citation['url']}")
+                        # If citation URL is invalid, we'll try the original URL as fallback
+                        if original_url.startswith('https://www.target.com/'):
+                            is_original_valid = await validate_target_url(original_url)
+                            if is_original_valid:
+                                product['url'] = original_url
+                                logger.info(f"Falling back to original URL that passed validation: {original_url}")
+                            else:
+                                logger.warning(f"Both citation and original URLs are invalid, skipping product: {product_title}")
+                                continue
+                        else:
+                            # Try remaining unused citations as a last resort
+                            found_backup = False
+                            for citation in target_citations:
+                                if not citation['used']:
+                                    is_valid = await validate_target_url(citation['url'])
+                                    if is_valid:
+                                        product['url'] = citation['url']
+                                        citation['used'] = True
+                                        logger.info(f"Using backup citation URL for {product_title}: {citation['url']}")
+                                        found_backup = True
+                                        break
+                            
+                            if not found_backup:
+                                logger.warning(f"No valid URL found for product, skipping: {product_title}")
+                                continue
+                else:
+                    # No matching citation, validate the JSON URL
+                    url = product.get('url', '')
+                    if not url or not url.startswith('https://www.target.com/'):
+                        # Try finding ANY unused citation as fallback
+                        found_backup = False
+                        for citation in target_citations:
+                            if not citation['used']:
+                                is_valid = await validate_target_url(citation['url'])
+                                if is_valid:
+                                    product['url'] = citation['url']
+                                    citation['used'] = True
+                                    logger.info(f"Using unmatched citation URL for {product_title}: {citation['url']}")
+                                    found_backup = True
+                                    break
+                        
+                        if not found_backup:
+                            logger.warning(f"No valid URL for product and no unused citations, skipping: {product_title}")
+                            continue
+                    else:
+                        # Validate the JSON URL
+                        is_valid = await validate_target_url(url)
+                        if not is_valid:
+                            # If JSON URL is invalid, try finding ANY unused citation
+                            found_backup = False
+                            for citation in target_citations:
+                                if not citation['used']:
+                                    is_valid = await validate_target_url(citation['url'])
+                                    if is_valid:
+                                        product['url'] = citation['url']
+                                        citation['used'] = True
+                                        logger.info(f"JSON URL invalid, using unmatched citation for {product_title}: {citation['url']}")
+                                        found_backup = True
+                                        break
+                            
+                            if not found_backup:
+                                logger.warning(f"No valid URL found for product, skipping: {product_title}")
+                                continue
                 
                 # Format price as float
                 if 'price' in product:
@@ -343,6 +454,26 @@ For the URL field, only use real, valid Target product URLs from your search res
                 
                 valid_products.append(product)
             
+            # If we have unused citations but not enough products, add them as products
+            if len(valid_products) < max_results:
+                for citation in target_citations:
+                    if not citation['used'] and citation.get('title') and citation.get('url'):
+                        # Create a new product from the citation
+                        is_valid = await validate_target_url(citation['url'])
+                        if is_valid:
+                            new_product = {
+                                'product_title': citation['title'],
+                                'price': None,  # We don't have price info from citations
+                                'url': citation['url'],
+                                'in_stock': True,  # Assume in stock
+                                'source': 'citation_only'  # Tag that this came directly from a citation
+                            }
+                            valid_products.append(new_product)
+                            logger.info(f"Added product directly from unused citation: {citation['title']}")
+                            
+                            if len(valid_products) >= max_results:
+                                break
+            
             if valid_products:
                 logger.info(f"Successfully found {len(valid_products)} products for '{query}'")
                 return valid_products[:max_results]
@@ -362,7 +493,8 @@ For the URL field, only use real, valid Target product URLs from your search res
                     data = json.loads(json_str)
                     if isinstance(data, list) and len(data) > 0:
                         logger.info(f"Successfully extracted {len(data)} products using regex")
-                        # Process these products with the same validation logic as above
+                        
+                        # Process these products with reversal priority for URLs
                         valid_products = []
                         for product in data:
                             if not isinstance(product, dict):
@@ -376,16 +508,47 @@ For the URL field, only use real, valid Target product URLs from your search res
                                 product['product_title'] = product_title  # Standardize field name
                             else:
                                 continue  # Skip if no title found
+                            
+                            # Try to find a citation match first
+                            matching_citation = find_best_citation_match(product_title)
+                            if matching_citation:
+                                product['url'] = matching_citation['url']
                                 
-                            # Basic validation of URL
+                            # Basic validation
                             if product.get('url') and product['url'].startswith('https://www.target.com/'):
-                                valid_products.append(product)
+                                is_valid = await validate_target_url(product['url'])
+                                if is_valid:
+                                    valid_products.append(product)
                                 
                         if valid_products:
                             logger.info(f"Returning {len(valid_products)} products after fallback parsing")
                             return valid_products[:max_results]
                 except Exception as parse_e:
                     logger.error(f"Error in fallback JSON parsing: {parse_e}")
+            
+            # If we still have no products but have citations, create products from citations
+            if target_citations:
+                valid_products = []
+                for citation in target_citations:
+                    if citation.get('title') and citation.get('url'):
+                        is_valid = await validate_target_url(citation['url'])
+                        if is_valid:
+                            new_product = {
+                                'product_title': citation['title'],
+                                'price': None,  # We don't have price info 
+                                'url': citation['url'],
+                                'in_stock': True,  # Assume in stock
+                                'source': 'citation_only'  # Tag as citation-only
+                            }
+                            valid_products.append(new_product)
+                            logger.info(f"Created product from citation when JSON parsing failed: {citation['title']}")
+                            
+                            if len(valid_products) >= max_results:
+                                break
+                
+                if valid_products:
+                    logger.info(f"Returning {len(valid_products)} products created from citations")
+                    return valid_products[:max_results]
             
             return []
         
