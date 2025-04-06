@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Oreo Original Family Size - 18.12oz",
+    "price": 5.19,
+    "url": "https://www.target.com/p/oreo-original-family-size-18-12oz/-/A-87471453",
+    "image_url": "https://target.scene7.com/is/image/Target/GUEST_44e47f56-ea5b-4b60-ae9a-bad46af9dcff",
+    "in_stock": true
+  },
+  {
+    "name": "Oreo Original Gluten Free - 12.08oz",
+    "price": 5.19,
+    "url": "https://www.target.com/p/oreo-original-gluten-free-12-08oz/-/A-87471454",
+    "image_url": "https://target.scene7.com/is/image/Target/GUEST_44e47f56-ea5b-4b60-ae9a-bad46af9dcff",
+    "in_stock": true
+  },
+  {
+    "name": "Oreo Original Cookies Party Size - 24.16oz",
+    "price": 6.19,
+    "url": "https://www.target.com/p/oreo-original-cookies-party-size-24-16oz/-/A-87471455",
+    "image_url": "https://target.scene7.com/is/image/Target/GUEST_44e47f56-ea5b-4b60-ae9a-bad46af9dcff",
+    "in_stock": true
+  }
+]

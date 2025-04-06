@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Super Mario Party Jamboree - Nintendo Switch",
+    "price": 59.99,
+    "url": null,
+    "image_url": "https://target.scene7.com/is/image/Target/GUEST_12345678",
+    "in_stock": true
+  },
+  {
+    "name": "Minecraft - Nintendo Switch",
+    "price": 29.99,
+    "url": null,
+    "image_url": "https://target.scene7.com/is/image/Target/GUEST_23456789",
+    "in_stock": true
+  },
+  {
+    "name": "Mario vs. Donkey Kong - Nintendo Switch",
+    "price": 49.99,
+    "url": null,
+    "image_url": "https://target.scene7.com/is/image/Target/GUEST_34567890",
+    "in_stock": true
+  }
+]
