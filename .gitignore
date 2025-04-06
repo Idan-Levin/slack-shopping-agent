@@ -33,4 +33,11 @@ venv.bak
 ehthumbs.db
 Thumbs.db
 
-feature_plan.mdsearch_results_*.json
+# Test artifacts
+search_results_*.json
+*_test.py
+simple_test.py
+test_*.py
+
+# Logs
+*.log
