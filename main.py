@@ -32,10 +32,19 @@ from slack_handler import register_listeners, get_agent_user_id
 register_listeners(slack_app)
 
 # Import scheduler setup AFTER initializing slack_app and getting client
-from scheduler import setup_scheduler
+from scheduler import setup_scheduler, send_test_message
 # Create Slack client instance using the token from environment variable
 slack_client = AsyncWebClient(token=os.environ.get("SLACK_AGENT_TOKEN"))
-scheduler = setup_scheduler(slack_client) # Pass the client instance
+
+# Ensure token is explicitly set and not None
+slack_token = os.environ.get("SLACK_AGENT_TOKEN")
+if not slack_token:
+    logger.error("SLACK_AGENT_TOKEN is not set or empty. Scheduled messages will fail.")
+else:
+    logger.info("SLACK_AGENT_TOKEN is configured.")
+
+# Pass the client instance to the scheduler
+scheduler = setup_scheduler(slack_client)
 
 # Create request handler for FastAPI
 app_handler = AsyncSlackRequestHandler(slack_app)
@@ -75,9 +84,17 @@ async def startup_event():
         initialize_db()
     else:
         logger.info(f"Database file found at {db_path}.")
+        
     # Proactively fetch Agent User ID on startup
     await get_agent_user_id(slack_client)
-
+    
+    # Try sending a test message from scheduler to verify token works
+    logger.info("Sending test message directly from startup event...")
+    test_success = await send_test_message()
+    if test_success:
+        logger.info("✅ Test message sent successfully! Slack token is working.")
+    else:
+        logger.error("❌ Failed to send test message. Scheduled messages will likely fail.")
 
 @api.on_event("shutdown")
 async def shutdown_event():
