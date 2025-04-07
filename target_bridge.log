@@ -1,6 +1,0 @@
-2025-04-06 13:42:11,257 - __main__ - INFO - Created sample JSON file: ./exports/sample_shopping_list.json
-2025-04-06 13:42:11,257 - __main__ - INFO - Testing Target Bridge with sample data...
-2025-04-06 13:42:11,257 - target_bridge - INFO - Loaded 5 items from ./exports/sample_shopping_list.json
-2025-04-06 13:42:11,257 - __main__ - INFO - Successfully loaded 5 items from sample data
-2025-04-06 13:42:11,257 - target_bridge - ERROR - No automation path configured
-2025-04-06 13:42:11,257 - __main__ - INFO - Bridge test completed successfully!
