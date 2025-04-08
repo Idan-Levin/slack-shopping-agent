@@ -1,6 +1,8 @@
 import os
 import logging
 from typing import Dict, Any
+import json
+import re
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_openai_functions_agent
@@ -80,7 +82,7 @@ agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
 
 logger.info("LangChain agent executor created with tools and memory.")
 
-# --- Function to Invoke Agent ---
+# --- Function to Invoke Agent (Shopping List) ---
 async def invoke_agent(user_input: str, session_id: str, user_id: str, user_name: str) -> str:
     """Invokes the LangChain agent with user input and session context."""
     logger.info(f"Invoking agent for session {session_id}, user {user_id} ({user_name}), input: '{user_input}'")
@@ -117,3 +119,79 @@ async def invoke_agent(user_input: str, session_id: str, user_id: str, user_name
         logger.error(f"Error invoking agent for session {session_id}: {e}", exc_info=True)
         # Provide a user-friendly error message
         return "Sorry, an internal error occurred while processing your request. Please try again later."
+
+
+# --- New Function to Parse Mandate Rules ---
+MANDATE_PARSE_SYSTEM_PROMPT = """You are an assistant that parses natural language mandate rules into a structured JSON object.
+Rules might include:
+- Spending limits (per transaction, per day, etc.)
+- Allowed or blocked merchants (by name or category)
+- Requirements for human approval under certain conditions
+- Time-based restrictions
+- Restrictions on item types (e.g., no alcohol)
+- Settings for autonomous purchases (allowed up to a certain amount, etc.)
+
+Analyze the user's input text and represent the extracted rules as a JSON object.
+If specific values aren't mentioned (e.g., just "spending limit"), represent that appropriately (e.g., `"spending_limit": "unspecified"` or `null`).
+If no rules can be extracted, return an empty JSON object `{}`.
+Return ONLY the JSON object itself, with no other text before or after it.
+Example Input: 'Max transaction $200. Block merchants: alcohol, tobacco. Allow autonomous purchases up to $50'
+Example Output:
+```json
+{
+  "max_transaction_amount": 200,
+  "blocked_merchant_categories": ["alcohol", "tobacco"],
+  "autonomous_purchase_limit": 50
+}
+```
+"""
+
+mandate_prompt = ChatPromptTemplate.from_messages([
+    ("system", MANDATE_PARSE_SYSTEM_PROMPT),
+    ("human", "{mandate_text}"),
+])
+
+# Combine prompt and LLM
+mandate_parser_chain = mandate_prompt | LLM
+
+async def parse_mandate_rules(mandate_text: str) -> str:
+    """Uses an LLM chain to parse natural language mandate rules into a JSON string."""
+    logger.info(f"Attempting to parse mandate rules: '{mandate_text}'")
+    try:
+        # Invoke the specialized chain
+        response = await mandate_parser_chain.ainvoke({"mandate_text": mandate_text})
+        
+        # The response object has a 'content' attribute with the text
+        json_string = response.content.strip()
+        
+        # Basic validation: Check if it looks like JSON
+        if not (json_string.startswith('{') and json_string.endswith('}')) and \
+           not (json_string.startswith('[') and json_string.endswith(']')):
+            logger.warning(f"LLM did not return a valid JSON structure. Raw output: {json_string}")
+            # Attempt to find JSON within potential markdown code fences
+            match = re.search(r'```json\s*({.*?})\s*```', json_string, re.DOTALL)
+            if match:
+                json_string = match.group(1)
+                logger.info("Extracted JSON from markdown code fence.")
+            else:
+                # Return an error structure if not JSON
+                error_json = json.dumps({"error": "Failed to parse rules into JSON.", "raw_output": json_string})
+                logger.error(f"Returning error JSON: {error_json}")
+                return error_json
+
+        # Further validation: Try parsing the JSON to ensure it's valid
+        try:
+            json.loads(json_string)
+            logger.info(f"Successfully parsed mandate rules into JSON string: {json_string}")
+            return json_string
+        except json.JSONDecodeError as json_e:
+            logger.error(f"LLM output looked like JSON but failed to parse: {json_e}. Raw output: {json_string}")
+            error_json = json.dumps({"error": "Invalid JSON structure returned.", "raw_output": json_string})
+            return error_json
+
+    except Exception as e:
+        logger.error(f"Error parsing mandate rules with LLM: {e}", exc_info=True)
+        # Return a JSON string indicating an error
+        return json.dumps({"error": "An unexpected error occurred during mandate parsing.", "details": str(e)})
+
+# --- End Mandate Parsing Function ---

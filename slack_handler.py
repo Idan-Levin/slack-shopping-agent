@@ -2,6 +2,7 @@ import os
 import logging
 import re
 import requests # Add requests import
+import json # Add json import
 from typing import Optional, Dict, Set, Mapping
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
@@ -11,7 +12,7 @@ from slack_bolt.context.respond import Respond # Import Respond for ephemeral me
 from datetime import datetime, timedelta
 
 # Assuming agent_executor.py is in the same directory
-from agent_executor import invoke_agent
+from agent_executor import invoke_agent, parse_mandate_rules # Import the new function
 
 logger = logging.getLogger(__name__)
 
@@ -838,27 +839,59 @@ Use `/list-reminders` to see all scheduled reminders.
     @app.view("set_mandate_modal")
     async def handle_set_mandate_submission(ack: AsyncAck, body: dict, client: AsyncWebClient, view: dict, logger, respond: Respond):
         """Handles the submission of the set_mandate modal."""
-        # Ensure ack() is called first!
-        await ack()
+        await ack() # Acknowledge the submission immediately
 
         user_id = body["user"]["id"]
-        # Extract the submitted value
         submitted_values = view["state"]["values"]
         mandate_rules_text = submitted_values["mandate_rules_block"]["mandate_rules_input"]["value"]
-        # Extract original channel_id from private_metadata
         original_channel_id = view.get("private_metadata")
 
-        # --- Mock Processing ---
-        logger.info(f"Received mandate rules submission from user {user_id} (Original Channel: {original_channel_id})")
-        logger.info(f"Rules:\n{mandate_rules_text}")
+        logger.info(f"Received mandate rules submission from user {user_id} (Original Channel: {original_channel_id}) Text: '{mandate_rules_text}'")
 
-        # In a real implementation, you would parse these rules, validate them,
-        # potentially use an LLM to structure them, and store them persistently.
-        # For now, just confirm receipt.
-        # --- End Mock Processing ---
+        # --- New: Parse rules using LLM --- 
+        parsed_json_string = ""
+        parsed_mandate_object = None
+        error_message = None
 
-        # --- Send Ephemeral Confirmation using client.chat_postEphemeral ---
-        confirmation_text = f"✅ Mandate rules received (mock implementation). You entered:\n```\n{mandate_rules_text}\n```"
+        try:
+            parsed_json_string = await parse_mandate_rules(mandate_rules_text)
+            parsed_mandate_object = json.loads(parsed_json_string) # Try parsing the JSON string
+            
+            # Check if the parsing itself returned an error object
+            if isinstance(parsed_mandate_object, dict) and "error" in parsed_mandate_object:
+                error_message = f"Error parsing rules: {parsed_mandate_object.get('error')}" 
+                if 'raw_output' in parsed_mandate_object:
+                     error_message += f"\nLLM Output: ```{parsed_mandate_object['raw_output']}```"
+                logger.error(f"Mandate parsing failed: {error_message}")
+                parsed_mandate_object = None # Clear the object if it was an error indicator
+            else:
+                 logger.info(f"Successfully parsed rules into object: {parsed_mandate_object}")
+                 # TODO: Store the parsed_mandate_object persistently here!
+
+        except json.JSONDecodeError as json_e:
+            logger.error(f"Failed to decode JSON response from parse_mandate_rules: {json_e}. Raw string: '{parsed_json_string}'", exc_info=True)
+            error_message = f"Error: Could not decode the parsed rules structure. Please check the format.\nRaw LLM Output: ```{parsed_json_string}```"
+            parsed_mandate_object = None
+        except Exception as e:
+            logger.error(f"Unexpected error during mandate parsing call: {e}", exc_info=True)
+            error_message = f"An unexpected error occurred while processing the rules: {e}"
+            parsed_mandate_object = None
+        # --- End Parsing --- 
+
+        # --- Send Ephemeral Confirmation --- 
+        confirmation_text = ""
+        if error_message:
+            confirmation_text = f"❌ {error_message}"
+        elif parsed_mandate_object is not None:
+            # Format the JSON object nicely for display
+            formatted_json = json.dumps(parsed_mandate_object, indent=2)
+            confirmation_text = f"✅ Mandate rules processed. Here is the structured mandate object:\n```json\n{formatted_json}\n```"
+            # Add note about storage being mocked
+            confirmation_text += "\n\n_(Note: Mandate storage is not yet implemented. This object is not saved.)_"
+        else:
+            # Fallback if something unexpected happened
+            confirmation_text = "⚠️ Could not process mandate rules. Please check logs or try again."
+
         if original_channel_id:
             try:
                  await client.chat_postEphemeral(
@@ -866,23 +899,22 @@ Use `/list-reminders` to see all scheduled reminders.
                      user=user_id,
                      text=confirmation_text
                  )
-                 logger.info(f"Sent mandate submission confirmation to user {user_id} in channel {original_channel_id}")
+                 logger.info(f"Sent mandate submission confirmation/error to user {user_id} in channel {original_channel_id}")
             except Exception as e:
-                 logger.error(f"Failed to send ephemeral confirmation to original channel {original_channel_id}: {e}", exc_info=True)
-                 # Fallback: Try sending a DM if channel post failed
+                 logger.error(f"Failed to send ephemeral confirmation/error to original channel {original_channel_id}: {e}", exc_info=True)
+                 # Fallback DM attempt
                  try:
                      await client.chat_postEphemeral(channel=user_id, user=user_id, text=confirmation_text + "\n(Could not post to original channel)")
-                     logger.info(f"Sent mandate submission confirmation as DM to user {user_id}")
-                 except Exception as dm_e:
-                     logger.error(f"Failed to send fallback DM confirmation: {dm_e}", exc_info=True)
+                 except Exception:
+                     pass # Ignore DM failure if channel failed
         else:
-            # If no original_channel_id, try sending as DM
-            logger.warning(f"No original_channel_id found in private_metadata for mandate submission from user {user_id}. Attempting DM.")
-            try:
+            # DM attempt if no channel ID
+             logger.warning(f"No original_channel_id found. Attempting DM confirmation/error for user {user_id}.")
+             try:
                 await client.chat_postEphemeral(channel=user_id, user=user_id, text=confirmation_text)
-                logger.info(f"Sent mandate submission confirmation as DM to user {user_id}")
-            except Exception as dm_e:
-                logger.error(f"Failed to send DM confirmation (no channel_id): {dm_e}", exc_info=True)
+             except Exception as dm_e:
+                 logger.error(f"Failed to send DM confirmation/error (no channel_id): {dm_e}", exc_info=True)
+        # --- End Confirmation --- 
 
     # --- End View Submission Handler ---
 
