@@ -1,243 +1,144 @@
-# Slack Shopping Agent (LangChain Version)
+# Slack Shopping Agent with LangChain and Target Automation Integration
 
-This project implements a Slack agent that acts as a conversational agent to manage a shared weekly shopping list, primarily focusing on products from Target.com. It uses LangChain with an OpenAI model (GPT-4 Turbo recommended) to understand natural language requests and interact with various tools for scraping, searching, and database management.
+This project implements a Slack bot that acts as a shared shopping list manager for a team or channel. It uses LangChain and OpenAI to understand user requests for adding, removing, or viewing items. A key feature is the integration with a separate Target Automation Agent (a TypeScript service) to trigger automated shopping runs.
+
+## Table of Contents
+
+- [Features](#features)
+- [Workflow](#workflow)
+- [Technical Stack](#technical-stack)
+- [Setup](#setup)
+- [Usage](#usage)
+- [Environment Variables](#environment-variables)
+- [Project Structure](#project-structure)
+- [Future Enhancements](#future-enhancements)
 
 ## Features
 
-* **Conversational Interaction:** Add, search, view, and delete items using natural language by mentioning the agent in Slack (e.g., `@ShopAgent add https://...`, `@ShopAgent find milk`).
-* **Add Item via URL:** Provide a Target.com product URL, and the agent will scrape details (title, price) and ask for quantity before adding.
-* **Search Items:** Ask the agent to find items on Target (e.g., "find cheap snacks"). It will present options, and you can choose one to add after specifying quantity.
-* **View List:** Ask the agent "what's on the list?" to see all currently active items.
-* **Delete Item:** Ask the agent to remove an item you added using its description or ID (e.g., "delete the cookies", "remove item id 5").
-* **Weekly Reminder:** Automatically posts a reminder message to a designated channel every Friday at 5 PM (configurable timezone).
-* **Order Placement:** An admin can use the `/order-placed` slash command to notify the channel that the order has been made and clear the active list.
-* **Context-Aware:** Uses conversation memory to handle multi-step interactions like asking for quantity after finding/scraping an item.
+-   **Natural Language Item Management:** Add items to the shopping list by mentioning the bot (e.g., "@ShoppingAgent add 2 apples and a loaf of bread").
+-   **Quantity Recognition:** Understands quantities mentioned in requests.
+-   **Price Fetching (Experimental):** Attempts to fetch product prices from Target.com using Playwright/BeautifulSoup.
+-   **List Viewing:** Ask the bot to show the current list.
+-   **Item Removal:** Ask the bot to remove specific items.
+-   **User Association:** Tracks which user added each item.
+-   **Order Placement & Automation Trigger:**
+    -   Admins use `/order-placed`.
+    -   The agent calls the Target Automation Agent API to trigger a shopping run.
+    -   Marks items as ordered in the database *only* upon successful API trigger.
+    -   Provides clear confirmation or error messages in Slack.
+-   **Reminder Scheduling (Admin):**
+    -   `/schedule-reminder`: Schedule one-time or weekly reminders (e.g., "add items before Friday").
+    -   `/list-reminders`: View scheduled reminders.
+    -   `/delete-reminder`: Remove a scheduled reminder.
+-   **Persistent Storage:** Uses SQLite for the shopping list.
+-   **Configurable:** Uses environment variables for secrets and settings.
 
-## Technology Stack
+## Workflow
 
-* **Python:** Core programming language (3.10+).
-* **LangChain:** Framework for building language model applications, handling the agent logic, tool usage, and memory.
-* **OpenAI API:** Powers the language model (GPT-4 Turbo recommended) for understanding and responding.
-* **FastAPI:** Asynchronous web framework for handling incoming Slack requests.
-* **Slack Bolt for Python:** SDK for simplifying Slack API interactions and event handling.
-* **Playwright:** For robust browser automation to scrape JavaScript-heavy Target product pages.
-* **BeautifulSoup4:** For parsing HTML content obtained via Playwright.
-* **APScheduler:** For scheduling the weekly reminder message.
-* **SQLite:** Simple file-based database for storing the shopping list.
-* **Docker:** For containerizing the application, ensuring consistent deployment and managing dependencies like Playwright.
-* **Uvicorn:** ASGI server to run the FastAPI application.
+1.  **Add Items:** Users `@mention` the `@ShoppingAgent` in the designated channel or a thread initiated by the bot. Example: `@ShoppingAgent Please add 3 bananas and 1 gallon of milk.`
+2.  **Agent Processing:** The bot uses LangChain/OpenAI to parse the message, identify items and quantities, potentially look up prices, and adds them to the `shopping_list.db` database, associating them with the user.
+3.  **View List:** Any user can ask `@ShoppingAgent show me the list`.
+4.  **Order Placement (Admin):** An admin user runs the `/order-placed` command.
+5.  **API Call:** The Slack agent retrieves the active list, formats it, and sends a POST request to the `/trigger-shopping-run` endpoint of the configured Target Automation Agent (using `STAGEHAND_API_ENDPOINT` and `STAGEHAND_API_KEY` from `.env`).
+6.  **Outcome:**
+    *   **Success (API returns 202):** The agent marks the items as `ordered` in the database and posts a confirmation message to the channel summarizing the triggered order.
+    *   **Failure (API returns other status or error):** The agent sends an ephemeral error message to the admin, and the items remain `active` in the database.
+7.  **Reminders:** Admins can use `/schedule-reminder`, `/list-reminders`, and `/delete-reminder` to manage automated messages posted to the channel.
 
-## Setup & Installation
+## Technical Stack
 
-**Prerequisites:**
+-   Python 3.11+
+-   `slack_bolt`: Slack SDK for Python
+-   `langchain` & `langchain-openai`: LLM orchestration and OpenAI integration
+-   `openai`: OpenAI API client
+-   `requests`: For making HTTP calls to the Target Automation Agent
+-   `playwright` & `beautifulsoup4`: For web scraping product prices (experimental)
+-   `apscheduler`: For scheduling reminders
+-   `python-dotenv`: For managing environment variables
+-   SQLite: For database storage
+-   FastAPI/Uvicorn: Web framework (primarily for running the bot process)
 
-* Git installed.
-* Python 3.10 or higher installed.
-* Docker installed and running.
-* A GitHub account (or GitLab/Bitbucket).
-* A Slack workspace where you can install apps.
-* An OpenAI API key ([platform.openai.com](https://platform.openai.com/)).
-* A Render account ([render.com](https://render.com/)).
+## Setup
 
-**Steps:**
-
-1.  **Clone the Repository:**
+1.  **Prerequisites:** Python 3.11+, pip.
+2.  **Clone:** `git clone <repository-url>`
+3.  **Navigate:** `cd slack_shopping_agent`
+4.  **Virtual Environment:**
     ```bash
-    git clone [https://github.com/YourUsername/slack-shopping-agent-langchain.git](https://github.com/YourUsername/slack-shopping-agent-langchain.git) # Replace with your repo URL
-    cd slack-shopping-agent-langchain
+    python -m venv venv
+    source venv/bin/activate  # Linux/macOS
+    # venv\Scripts\activate    # Windows
     ```
-
-2.  **Environment Variables (Local Development):**
-    * Create a file named `.env` in the project root.
-    * **IMPORTANT:** Add `.env` to your `.gitignore` file. **Do NOT commit your `.env` file.**
-    * Add the following keys, replacing the placeholder values:
-        ```dotenv
-        # .env - For local development ONLY
-        SLACK_AGENT_TOKEN=xoxb-your-slack-agent-token
-        SLACK_SIGNING_SECRET=your-slack-signing-secret
-        OPENAI_API_KEY=sk-your-openai-api-key
-        TARGET_CHANNEL_ID=C123ABC456 # ID of the Slack channel for reminders/notifications
-        DATABASE_PATH=./shopping_list.db # Path for local SQLite file
-        TZ=Asia/Jerusalem # Or your local timezone e.g., America/New_York, Europe/London
-        ```
-
-3.  **Install Python Dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-4.  **Install Playwright Browsers:**
-    * This downloads the necessary browser binaries for Playwright.
-    ```bash
-    playwright install --with-deps chromium
-    # Or: playwright install --with-deps # Installs browsers listed in playwright config (if any)
-    ```
-
-5.  **Initialize Database (Local):**
-    * The application will automatically create the `shopping_list.db` file (using the `DATABASE_PATH` from `.env`) and run the schema setup (`db_schema.sql`) the first time it starts if the file doesn't exist.
-
-## Running Locally (Optional)
-
-Running locally is useful for testing and debugging but requires exposing your local server to the internet for Slack API calls.
-
-1.  **Ensure `.env` file is configured** with your test tokens/keys.
-2.  **Use `ngrok` or a similar tool:**
-    * Download and install ngrok ([ngrok.com](https://ngrok.com/)).
-    * Expose your local port (default is 8000):
-        ```bash
-        ngrok http 8000
-        ```
-    * ngrok will provide a public HTTPS URL (e.g., `https://randomstring.ngrok.io`).
-3.  **Update Slack App URLs:** Go to your Slack app settings and temporarily update the Request URLs for Event Subscriptions, Interactivity, and Slash Commands to use your `ngrok` HTTPS URL (e.g., `https://randomstring.ngrok.io/slack/events`).
-4.  **Run the application:**
-    ```bash
-    uvicorn main:api --host 0.0.0.0 --port 8000 --reload
-    ```
-5.  Test interactions by mentioning the agent in your test Slack channel. Remember to revert Slack URLs when deploying.
-
-## Deployment (Render)
-
-This application is designed to be deployed easily on Render using Docker.
-
-1.  **Push Code:** Ensure your latest code (including `Dockerfile`, `.gitignore`, etc., but **NOT** `.env`) is pushed to your GitHub repository.
-2.  **Create Render Web Service:**
-    * Log in to Render -> New + -> Web Service.
-    * Connect your GitHub repository.
-    * Configure:
-        * **Name:** Choose a unique name (e.g., `slack-shop-agent-lc`).
-        * **Region:** Select a suitable region.
-        * **Branch:** `main` (or your deployment branch).
-        * **Runtime:** **Docker**. Render should detect `Dockerfile`.
-        * **Instance Type:** **Free** (or a paid tier if needed).
-3.  **Add Persistent Disk:**
-    * Scroll to "Disks" -> "Add Disk".
-    * **Name:** e.g., `database-disk`.
-    * **Mount Path:** `/data` (Crucial!).
-    * **Size (GB):** `1` (Minimum).
-4.  **Configure Environment Variables (Render UI):**
-    * Go to the "Environment" section for your new service.
-    * Add the following environment variables (do NOT use a `.env` file here):
-        * `SLACK_AGENT_TOKEN`: Your production Slack agent token.
-        * `SLACK_SIGNING_SECRET`: Your production Slack signing secret.
-        * `OPENAI_API_KEY`: Your OpenAI API key.
-        * `TARGET_CHANNEL_ID`: The production Slack channel ID.
-        * `DATABASE_PATH`: `/data/shopping_list.db` (Points to the persistent disk).
-        * `PYTHONUNBUFFERED`: `1`
-        * `TZ`: `Asia/Jerusalem` (Or your desired production timezone).
-        * `PORT`: `8000` (Render sets this, but good to include).
-5.  **Deploy:** Click "Create Web Service". Wait for the build and deployment process to complete. Monitor the logs for errors.
-6.  **Update Slack App Request URLs:**
-    * Copy your service's URL from Render (e.g., `https://your-app-name.onrender.com`).
-    * Go back to your Slack App configuration page ([api.slack.com/apps](https://api.slack.com/apps)).
-    * Update the Request URLs for:
-        * **Event Subscriptions:** `https://your-app-name.onrender.com/slack/events`
-        * **Interactivity & Shortcuts:** `https://your-app-name.onrender.com/slack/interactive`
-        * **Slash Commands (`/order-placed`):** `https://your-app-name.onrender.com/slack/commands`
-    * Save changes in Slack. You might need to reinstall the app to your workspace.
-
-## Slack App Configuration Summary
-
-Ensure your Slack App is configured with:
-
-* **Agent User:** Added.
-* **Scopes (Agent Token):** `app_mentions:read`, `chat:write`, `commands`, `users:read`, `channels:history`.
-* **Event Subscriptions:** Enabled, Request URL set, Subscribed to `app_mention` agent event.
-* **Interactivity & Shortcuts:** Enabled, Request URL set (even if no interactive components are currently used).
-* **Slash Commands:** `/order-placed` command created, Request URL set.
-* **Credentials:** Agent Token (`SLACK_AGENT_TOKEN`) and Signing Secret (`SLACK_SIGNING_SECRET`) copied securely.
-* **Installation:** App installed to your workspace, Agent invited to the `TARGET_CHANNEL_ID`.
+5.  **Install Dependencies:** `pip install -r requirements.txt`
+6.  **Install Playwright Browsers:** `playwright install` (Needed for price fetching)
+7.  **Configure Environment:**
+    *   Copy `.env.example` to `.env`.
+    *   Edit `.env` and fill in your actual secrets and configuration (see [Environment Variables](#environment-variables)). **Crucially, set `STAGEHAND_API_ENDPOINT` and `STAGEHAND_API_KEY` to point to your running Target Automation Agent.**
+8.  **Run the Agent:** `python main.py`
 
 ## Usage
 
-* **Primary Interaction:** Mention the agent in the designated Slack channel: `@YourAgentName <your request>`.
-* **Examples:**
-    * `@YourAgentName add https://www.target.com/p/tide-pods...` (Follow prompts for quantity)
-    * `@YourAgentName can you find laundry detergent?` (Review options, confirm selection, provide quantity)
-    * `@YourAgentName what is on the shopping list?`
-    * `@YourAgentName please delete the Tide Pods`
-    * `@YourAgentName remove item 3` (If you know the Item ID from viewing the list)
-    * `@YourAgentName hello` (Test basic interaction)
-* **Admin Command:** Use `/order-placed` to mark the list as complete and notify the channel.
+-   **Adding Items:** `@ShoppingAgent add [quantity] [item name]` (e.g., `@ShoppingAgent add 2 boxes of cereal`)
+-   **Viewing List:** `@ShoppingAgent show list` or `@ShoppingAgent what's on the list?`
+-   **Removing Items:** `@ShoppingAgent remove apples`
+-   **Placing Order (Admin Only):** `/order-placed`
+-   **Scheduling Reminder (Admin Only):** `/schedule-reminder [once HH:MM | weekly day HH:MM] message`
+-   **Listing Reminders (Admin Only):** `/list-reminders`
+-   **Deleting Reminder (Admin Only):** `/delete-reminder [job_id]`
 
-## Target Automation Integration
+## Environment Variables
 
-The shopping agent now supports integration with Target automation systems through a semi-automated approach:
+Create a `.env` file in the project root with the following variables:
 
-### How It Works
+```dotenv
+# Slack Bot Credentials
+SLACK_AGENT_TOKEN="xoxb-your-slack-bot-token" # Bot User OAuth Token
+SLACK_SIGNING_SECRET="your-slack-signing-secret" # App Credentials -> Signing Secret
 
-1. **List Collection**: Users add items to the shopping list as usual through Slack.
-2. **Export Process**: When an admin runs the `/order-placed` command:
-   * The system marks all items as ordered (as before)
-   * The active shopping list is exported to a JSON file
-   * The admin receives a private notification with the export file path and instructions
+# OpenAI API Key
+OPENAI_API_KEY="sk-your-openai-api-key"
 
-3. **Automation Launch**: The admin can then run the bridge script to process the list:
-   ```bash
-   python target_bridge.py [--file "path_to_export.json"] [--notify]
-   ```
+# Slack Channel Configuration
+TARGET_CHANNEL_ID="C123ABC456" # ID of the channel where the bot operates
 
-4. **Result Notification**: The bridge script can send results back to Slack when completed.
+# Database Configuration
+DATABASE_PATH="./shopping_list.db" # Path to the SQLite database file
 
-### Configuration
+# Target Automation Agent Configuration
+STAGEHAND_API_ENDPOINT="https://your-target-automation-agent-url.com" # URL of the Target Automation Agent (TypeScript service)
+STAGEHAND_API_KEY="your-shared-api-key-for-automation-agent" # API key for the Target Automation Agent
 
-Add the following environment variables to your `.env` file or deployment environment:
-
-```
-EXPORT_DIR=./exports            # Directory for shopping list exports
-EXPORT_FORMAT=json              # Format for export files (json or txt)
-TARGET_AUTOMATION_PATH=./target_automation.py  # Path to your Target automation
+# --- Deprecated Variables (No longer used) ---
+# EXPORT_DIR="./exports"
+# EXPORT_FORMAT="json"
+# TARGET_AUTOMATION_PATH="./target_automation.py"
 ```
 
-### Benefits of This Approach
+## Project Structure
 
-* **Human Oversight**: Maintains admin approval before automation runs
-* **Simple Integration**: Uses file-based approach for easy debugging
-* **Flexible Format**: Supports both JSON and TXT export formats
-* **Minimal Changes**: Core shopping list functionality remains unchanged
+```
+slack_shopping_agent/
+├── .env                # Local environment variables (DO NOT COMMIT)
+├── .env.example        # Example environment variables
+├── .gitignore          # Git ignore rules
+├── main.py             # Main application entry point, initializes FastAPI & Bolt
+├── agent_executor.py   # Handles LangChain agent setup and invocation
+├── database.py         # SQLite database interactions (add, get, mark ordered)
+├── product_service.py  # Fetches product details (price) using web scraping
+├── scheduler.py        # Manages scheduled reminders using APScheduler
+├── slack_handler.py    # Handles Slack events (mentions, commands) via Bolt
+├── utils.py            # Utility functions (e.g., price formatting)
+├── requirements.txt    # Python dependencies
+├── shopping_list.db    # SQLite database file (created on first run)
+├── feature_plan.md     # Outline of features and technical stack
+└── README.md           # This file
+```
 
-### Customization
+## Future Enhancements
 
-The Target automation bridge (`target_bridge.py`) is designed to be customized for your specific automation needs. The placeholder code demonstrates how to:
-
-1. Load the exported shopping list
-2. Process items for Target automation
-3. Report results back to Slack
-
-Modify the `launch_automation` method to integrate with your specific Target automation system.
-
-## Important Notes & Caveats
-
-* 🚨 **Target Scraping:** The CSS selectors used in `product_service.py` to scrape Target.com are **highly likely to break** when Target updates their website. This is the most fragile part of the agent and will require manual updates to the selectors periodically. Consider using professional scraping APIs for more robustness if needed.
-* **LLM Reliability:** The agent's understanding of natural language depends on the OpenAI model and the quality of the system prompt (`agent_executor.py`). Complex or ambiguous requests might be misunderstood. The prompt may need tuning based on observed behavior.
-* **API Costs:** Using the OpenAI API (especially GPT-4) for processing messages incurs costs. Monitor your OpenAI usage. Consider using GPT-3.5 Turbo for lower costs if acceptable.
-* **Security:** Keep your Slack tokens, signing secret, and OpenAI API key secure. Do not commit them directly into your code or `.env`
-
-## Local Testing
-
-To test the agent functionality locally without deploying to Slack:
-
-1. Make sure your environment is set up with all dependencies installed:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-
-2. Ensure your `.env` file contains the necessary API keys:
-   ```
-   OPENAI_API_KEY=sk-your-openai-api-key
-   DATABASE_PATH=./shopping_list.db
-   ```
-
-3. Run the test script:
-   ```bash
-   python test_agent.py
-   ```
-
-4. Interact with the agent directly in your console by typing queries like:
-   - "find milk"
-   - "what's on the shopping list?"
-   - "add https://www.target.com/p/some-product-url"
-   - "delete item 1"
-
-The test script creates an interactive session where you can test the agent's capabilities without needing to deploy to Slack.
+-   Improve price fetching accuracy and reliability.
+-   Allow users to clear only *their own* items from the list.
+-   More detailed error reporting (e.g., specific API errors).
+-   Use Slack Modals for UI improvements (e.g., scheduling, list management).
+-   Containerize the application using Docker.
+-   Add unit and integration tests.

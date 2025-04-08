@@ -1,6 +1,7 @@
 import os
 import logging
 import re
+import requests # Add requests import
 from typing import Optional, Dict, Set, Mapping
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 TARGET_CHANNEL_ID: Optional[str] = os.getenv("TARGET_CHANNEL_ID")
 # Track the agent ID between requests
 AGENT_USER_ID: Optional[str] = None # Will be populated on startup/first event
+# --- New Environment Variables for Target Automation Agent ---
+STAGEHAND_API_ENDPOINT: Optional[str] = os.getenv("STAGEHAND_API_ENDPOINT")
+STAGEHAND_API_KEY: Optional[str] = os.getenv("STAGEHAND_API_KEY")
+# --- End New ---
 
 # Store threads initiated by the bot
 BOT_INITIATED_THREADS: Set[str] = set()
@@ -150,9 +155,9 @@ def register_listeners(app: AsyncApp):
         # Import database functions here or ensure they are accessible
         try:
             from database import mark_all_ordered, get_active_items
-            from utils import format_price, export_shopping_list  # Import utility for exporting
+            from utils import format_price 
         except ImportError:
-             logger.error("Database functions could not be imported in /order-placed.")
+             logger.error("Database or utility functions could not be imported in /order-placed.")
              await ack("Sorry, there was an internal error processing this command.")
              return
 
@@ -160,8 +165,15 @@ def register_listeners(app: AsyncApp):
         
         # Check if user is an admin
         user_id = body.get("user_id")
+        channel_id = body.get("channel_id") # Get channel_id for ephemeral messages
         if not user_id:
-            await say(text="Error: Could not identify the user.", thread_ts=body.get("thread_ts"))
+            # Use ephemeral message for errors before ack is confirmed
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id or body.get("user_id"), # Fallback just in case
+                text="Error: Could not identify the user."
+            )
+            # await say(text="Error: Could not identify the user.", thread_ts=body.get("thread_ts"))
             return
             
         try:
@@ -170,7 +182,7 @@ def register_listeners(app: AsyncApp):
             
             if not is_admin:
                 await client.chat_postEphemeral(
-                    channel=body.get("channel_id"),
+                    channel=channel_id,
                     user=user_id,
                     text="Sorry, only workspace admins can use the /order-placed command."
                 )
@@ -179,111 +191,139 @@ def register_listeners(app: AsyncApp):
         except Exception as e:
             logger.error(f"Error checking admin status: {e}")
             await client.chat_postEphemeral(
-                channel=body.get("channel_id"),
+                channel=channel_id,
                 user=user_id,
                 text="Error checking admin permissions. Please try again later."
             )
             return
             
-        items = get_active_items()
-        if not items:
-             await say(text="There were no active items on the list to mark as ordered.")
-             return
-
-        # Export the shopping list before marking as ordered
+        # --- New Logic: Fetch items and call Target API ---
         try:
-            # Get export format preference from environment or default to JSON
-            export_format = os.getenv("EXPORT_FORMAT", "json").lower()
-            export_path = export_shopping_list(items, export_format=export_format)
+            items = get_active_items()
+            if not items:
+                 # Use ephemeral message as main message might not be sent yet
+                 await client.chat_postEphemeral(
+                     channel=channel_id,
+                     user=user_id,
+                     text="There were no active items on the list to process."
+                 )
+                 # await say(text="There were no active items on the list to mark as ordered.")
+                 return
+
+            # Check if API endpoint and key are configured
+            if not STAGEHAND_API_ENDPOINT or not STAGEHAND_API_KEY:
+                logger.error("STAGEHAND_API_ENDPOINT or STAGEHAND_API_KEY environment variables not set.")
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="Error: Target Automation Agent endpoint or API key is not configured. Please contact the administrator."
+                )
+                return
+
+            # Format payload for the Target Automation Agent
+            items_payload = [
+                {"name": item['product_title'], "quantity": item['quantity']}
+                for item in items if item.get('product_title') # Ensure title exists
+            ]
+
+            if not items_payload:
+                 logger.warning("No valid items found to send to Target Automation Agent after filtering.")
+                 await client.chat_postEphemeral(
+                     channel=channel_id,
+                     user=user_id,
+                     text="Warning: No items with valid names found in the active list. Nothing sent to automation."
+                 )
+                 return
+
+            # Construct API details
+            api_url = f"{STAGEHAND_API_ENDPOINT.rstrip('/')}/trigger-shopping-run"
+            headers = {
+                'Content-Type': 'application/json',
+                'x-api-key': STAGEHAND_API_KEY
+            }
             
-            if export_path:
-                logger.info(f"Shopping list exported to {export_path}")
-                
-                # Build message with instructions for running the bridge script
-                bridge_script_path = os.path.join(os.path.dirname(__file__), "target_bridge.py")
-                bridge_cmd = f"python {bridge_script_path} --file \"{export_path}\" --notify"
-                
-                # Send a private message to the admin about the export
-                await client.chat_postEphemeral(
-                    channel=body.get("channel_id"),
-                    user=user_id,
-                    text=f"🔄 Shopping list exported to `{export_path}` for automation\n\n*To run the Target automation:*\n```\n{bridge_cmd}\n```"
-                )
-            else:
-                logger.error("Failed to export shopping list")
-                await client.chat_postEphemeral(
-                    channel=body.get("channel_id"),
-                    user=user_id,
-                    text="⚠️ Failed to export shopping list for automation"
-                )
-        except Exception as e:
-            logger.error(f"Error exporting shopping list: {e}", exc_info=True)
-            await client.chat_postEphemeral(
-                channel=body.get("channel_id"),
-                user=user_id,
-                text=f"⚠️ Error exporting shopping list: {str(e)}"
-            )
+            logger.info(f"Attempting to trigger Target Automation Agent at {api_url} with {len(items_payload)} items.")
 
-        try:
-            num_ordered = mark_all_ordered()
-            if num_ordered > 0:
-                channel_to_notify = TARGET_CHANNEL_ID or body.get("channel_id")
+            # Make the API call
+            response = requests.post(api_url, headers=headers, json=items_payload, timeout=30)
+
+            # --- Handle API Response ---
+            if response.status_code == 202:
+                logger.info(f"Successfully triggered Target Automation Agent. Response: {response.status_code}")
+                
+                # Mark items as ordered in the database ONLY on success
+                num_ordered = mark_all_ordered()
+                
+                # Prepare success notification (similar structure to before, but confirming trigger)
+                channel_to_notify = TARGET_CHANNEL_ID or channel_id
                 if not channel_to_notify:
                     logger.warning("No channel ID found for order placed notification.")
-                    await say(text=f"Marked {num_ordered} items as ordered, but couldn't determine which channel to notify.")
-                    return
+                    await client.chat_postEphemeral(
+                         channel=channel_id, 
+                         user=user_id, 
+                         text=f"Marked {num_ordered} items as ordered, but couldn't determine which channel to notify."
+                    )
+                    return # Stop here if we can't notify
 
-                # Group items by user for the notification
+                # Group items by user for the notification (reuse existing logic)
                 items_by_user = {}
                 for item in items:
-                    user_id = item.get('user_id', 'unknown')
-                    
-                    # Get a proper display name for this user
-                    if user_id in USER_NAMES_CACHE:
-                        user_name = USER_NAMES_CACHE[user_id]
-                    else:
-                        # Try to get the name from the item
-                        user_name = item.get('user_name')
-                        if not user_name or user_name.strip() == '':
-                            # Fetch from Slack API if needed
-                            user_name = await get_user_display_name(client, user_id)
-                    
-                    # Add to the right group
+                    item_user_id = item.get('user_id', 'unknown')
+                    user_name = await get_user_display_name(client, item_user_id)
                     if user_name not in items_by_user:
                         items_by_user[user_name] = []
                     items_by_user[user_name].append(item)
                 
-                # Calculate total price
                 total_price = sum(item.get('price', 0) * item.get('quantity', 1) for item in items if item.get('price') is not None)
                 
-                # Format the message with items grouped by user
-                message_lines = [f"✅ Order has been placed for the following {num_ordered} items (Total: {format_price(total_price)}):"]
-                
+                message_lines = [
+                    f"✅ Target automation run successfully triggered for {num_ordered} items (Total: {format_price(total_price)}):"
+                ]
                 for user_name, user_items in items_by_user.items():
-                    # Calculate user's subtotal
                     user_total = sum(item.get('price', 0) * item.get('quantity', 1) for item in user_items if item.get('price') is not None)
                     user_items_count = sum(item.get('quantity', 1) for item in user_items)
-                    
-                    # Add user section
                     message_lines.append(f"\n👤 *{user_name}* ({user_items_count} items, subtotal: {format_price(user_total)}):")
-                    
-                    # Add items for this user
                     for item in user_items:
                         item_price = item.get('price', 0) * item.get('quantity', 1) if item.get('price') is not None else 0
                         message_lines.append(f"• {item['quantity']} x {item['product_title']} ({format_price(item_price)})")
                 
-                message_lines.append("\nThe list has been cleared for next week.")
+                message_lines.append("\nThe shopping list has been cleared.")
                 
+                # Post the public success message
                 await client.chat_postMessage(
                     channel=channel_to_notify,
                     text="\n".join(message_lines)
                 )
-                logger.info(f"Order placed notification sent for {num_ordered} items to {channel_to_notify}.")
+                logger.info(f"Automation trigger notification sent for {num_ordered} items to {channel_to_notify}.")
+
             else:
-                 await say(text="No active items found to mark as ordered.")
+                # Handle API failure - DO NOT mark items as ordered
+                error_details = f"Status Code: {response.status_code}, Response: {response.text[:200]}" # Limit response length
+                logger.error(f"Failed to trigger Target Automation Agent. {error_details}")
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=f"❌ Failed to trigger Target automation ({error_details}). The shopping list has *not* been cleared. Please try again later or check the logs."
+                )
+
+        except requests.exceptions.RequestException as e:
+             # Handle network/request errors - DO NOT mark items as ordered
+             logger.error(f"Error calling Target Automation Agent API: {e}", exc_info=True)
+             await client.chat_postEphemeral(
+                 channel=channel_id,
+                 user=user_id,
+                 text=f"❌ Network error communicating with Target automation: {e}. The shopping list has *not* been cleared. Please check the connection or try again later."
+             )
+             
         except Exception as e:
-            logger.error(f"Error processing order placement: {e}", exc_info=True)
-            await say(text="Sorry, an error occurred while processing the order placement.")
+            # Catch-all for other potential errors during API call/processing
+            logger.error(f"Unexpected error during order placement processing: {e}", exc_info=True)
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f"An unexpected error occurred: {e}. The shopping list status is uncertain. Please check the logs."
+            )
+            # Note: We don't mark as ordered here either, as the state is uncertain
 
     async def process_message(body: dict, client: AsyncWebClient, say: AsyncSay, logger_from_context):
         """Process a message and generate a response from the agent."""

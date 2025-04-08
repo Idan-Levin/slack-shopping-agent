@@ -41,3 +41,32 @@ test_*.py
 
 # Logs
 *.log
+
+# SQLite database
+*.db-journal
+
+# Environment variables
+.env
+
+# Playwright
+.cache/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# IDE specific files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# macOS specific files
+.DS_Store
+
+# Removed old export directory
+exports/

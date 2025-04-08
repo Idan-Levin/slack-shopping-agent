@@ -1,102 +1,67 @@
-# Shopping Assistant - Target Automation Integration
+# Slack Shopping Agent - Feature Plan
 
-As you complete tasks and reference relevant files update this file as our memory to help with future tasks.
+This document outlines the planned features and workflow for the Slack Shopping Agent.
 
-## Goal
-Connect the Slack Shopping Assistant with Target Automation using a semi-automated approach that maintains human oversight while streamlining the shopping process.
+## Core Functionality
 
-## Overall Approach
-- Maintain the current Slack shopping list functionality
-- When `/order-placed` is executed, generate an export file for the automation
-- Notify admins when the list is ready for automation
-- Provide a bridge script to connect the systems
-- Maintain human oversight before actual purchases
+-   **Add Items:** Users can mention the bot (`@ShoppingAgent`) in the target channel or a thread initiated by the bot to add items to the shopping list. The agent uses LangChain and OpenAI to parse the request and add the item(s) to the SQLite database (`shopping_list.db`).
+    -   Includes quantity and attempts to fetch price using Playwright/BeautifulSoup.
+    -   Recognizes user requests to remove items or clear their own items.
+    -   Stores the Slack `user_id` and fetches the user's display name.
+-   **View List:** Users can ask the agent to show the current shopping list.
+-   **Clear List (Admin):** An admin user can run the `/order-placed` command.
+    -   The agent fetches the active shopping list from the database.
+    -   The agent calls the Target Automation Agent's API (`/trigger-shopping-run`) with the list payload and API key (from environment variables).
+    -   **On successful API trigger (e.g., 202 Accepted):**
+        -   Items in the database are marked as `ordered`.
+        -   A confirmation message is posted to the channel, summarizing the triggered items and total cost, grouped by user.
+        -   The list is effectively cleared for the next cycle.
+    -   **On API failure:**
+        -   Items are **not** marked as `ordered`.
+        -   An ephemeral error message is sent to the admin, indicating the failure.
+-   **Reminder Scheduling (Admin):**
+    -   `/schedule-reminder [once HH:MM | weekly day HH:MM] message`: Admins can schedule one-time or recurring weekly reminders to be posted in the target channel.
+    -   `/list-reminders`: Admins can view all currently scheduled reminders.
+    -   `/delete-reminder [job_id]`: Admins can delete a scheduled reminder by its ID.
+-   **Database:** Uses SQLite (`shopping_list.db`) to store items (product title, quantity, price, added timestamp, user ID, user name, ordered status).
+-   **Error Handling:** Provides informative error messages (often ephemeral) for command failures, API issues, or permission errors.
+-   **Configuration:** Uses `.env` for sensitive information (API keys, tokens) and configuration (channel ID, database path).
 
-## Tasks
+## Technical Stack
 
-### 1. Modify `/order-placed` Command for Export ✅
-- [x] Identify where to modify the command handler in `slack_handler.py`
-- [x] Create a function to export active shopping items to JSON
-- [x] Save the export file to a configurable location
-- [x] Add notification for admin when export is ready
-- [x] Update logging to track export process
+-   **Language:** Python 3.11+
+-   **Framework:** FastAPI (for potential future webhooks, though currently primarily script/Bolt-based)
+-   **Slack Integration:** `slack_bolt` SDK
+-   **LLM Orchestration:** LangChain
+-   **LLM:** OpenAI (GPT-4 Turbo or similar)
+-   **Web Scraping (Price):** Playwright + BeautifulSoup4
+-   **Scheduling:** APScheduler
+-   **Database:** SQLite (via `sqlite3` standard library)
+-   **Dependencies:** `python-dotenv`, `requests`
 
-### 2. Create a Bridge Script ✅
-- [x] Create a new Python script `target_bridge.py`
-- [x] Implement function to read the exported shopping list
-- [x] Add placeholder for launching Target automation
-- [x] Implement result logging back to Slack
-- [x] Add error handling and configuration options
+## Setup and Running
 
-### 3. Environment Configuration ✅
-- [x] Add new environment variables for file paths and automation settings
-- [x] Update `.env` file with required variables
-- [x] Document the new environment variables
-- [x] Create a sample configuration
+1.  Clone the repository.
+2.  Create a virtual environment: `python -m venv venv`
+3.  Activate the environment: `source venv/bin/activate` (or `venv\Scripts\activate` on Windows)
+4.  Install dependencies: `pip install -r requirements.txt`
+5.  Install Playwright browsers: `playwright install`
+6.  Copy `.env.example` to `.env`.
+7.  Fill in the required values in `.env`:
+    *   `SLACK_AGENT_TOKEN` (Bot Token)
+    *   `SLACK_SIGNING_SECRET`
+    *   `OPENAI_API_KEY`
+    *   `TARGET_CHANNEL_ID` (Channel where the bot operates)
+    *   `STAGEHAND_API_ENDPOINT` (URL of your running Target Automation Agent)
+    *   `STAGEHAND_API_KEY` (Shared API key for the Target Automation Agent)
+    *   `DATABASE_PATH` (Defaults to `./shopping_list.db`)
+8.  Run the agent: `python main.py`
 
-### 4. Documentation & Testing ✅
-- [x] Create documentation for the integration process
-- [x] Add usage instructions for administrators
-- [x] Create test cases to validate the export functionality
-- [x] Test the bridge script with sample data
+## Next Steps / Future Ideas
 
-### 5. Enhance Product Search with GPT-4o-mini Search Preview ✅
-- [x] Update `product_service.py` to implement GPT-4o-mini search preview
-- [x] Configure web search capabilities for accurate Target product data
-- [x] Add validation for returned URLs to ensure they are valid
-- [x] Update error handling for the new search implementation
-- [x] Test the enhanced search functionality
-
-## Implementation Summary
-
-### Task 1: Modify `/order-placed` Command (Complete)
-- Added a function called `export_shopping_list` to `utils.py` that exports active shopping items to JSON or TXT files
-- Implemented the export directory creation if it doesn't exist
-- Added timestamp-based filenames for export files
-- Modified the `/order-placed` command to export items before marking them as ordered
-- Added private admin notifications about the export with instructions
-
-### Task 2: Create Bridge Script (Complete)
-- Created `target_bridge.py` script that serves as a bridge between Slack and Target automation
-- Implemented functionality to find and load the latest export
-- Added placeholder for Target automation launch functionality
-- Implemented Slack notification for automation results
-- Added command-line interface with options for configuration and file paths
-
-### Task 3: Environment Configuration (Complete)
-- Added the following environment variables to `.env`:
-  - `EXPORT_DIR`: Directory where export files will be saved
-  - `EXPORT_FORMAT`: Format for export files ("json" or "txt")
-  - `TARGET_AUTOMATION_PATH`: Path to the Target automation script/executable
-- Created a sample configuration in `target_bridge.py`
-- Added requests module to requirements.txt
-
-### Task 4: Documentation & Testing (Complete)
-- Added detailed documentation to README.md explaining the integration
-- Created usage instructions for administrators
-- Added examples of how to run the bridge script
-- Created a test script (`test_bridge.py`) that validates the functionality
-- Generated sample data for testing
-- Successfully tested the bridge script
-
-### Task 5: Enhance Product Search (Complete)
-- Updated the product search functionality to use OpenAI's GPT-4o-mini Search Preview
-- Successfully replaced the previous approach which generated plausible but potentially invalid Target URLs
-- Implemented web search capabilities to provide real-time, accurate product information
-- Added robust validation and error handling for JSON extraction from responses
-- Added URL validation and normalization to ensure all returned URLs are valid
-- Improved format handling to process various response structures
-- Created and tested a test script (`test_search.py`) to verify the new search functionality
-- Tests confirmed valid Target product URLs are consistently returned
-
-## Next Steps for Future Implementation
-
-1. **Integration with actual Target Automation**: Update the `launch_automation` method in the bridge script to work with the specific Target automation system.
-
-2. **Enhanced Error Handling**: Add more robust error handling, perhaps retry logic for failed automation attempts.
-
-3. **Scheduled Processing**: Consider adding an option to automatically process the latest export file at scheduled intervals.
-
-4. **UI Improvements**: Consider adding interactive elements in Slack to approve or reject automation runs.
-
-5. **Analytics**: Track success rates and statistics for automated orders.
+-   Improve price fetching reliability (handle more site structures, CAPTCHAs).
+-   Add command to view/manage scheduled reminders (`/list-reminders`, `/delete-reminder`). - **DONE**
+-   Allow users to clear *only their own* items.
+-   More robust error handling and reporting.
+-   Explore using Slack Modals for a more interactive UI (e.g., for scheduling reminders).
+-   Containerization (Docker).
