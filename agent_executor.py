@@ -133,16 +133,16 @@ Rules might include:
 
 Analyze the user's input text and represent the extracted rules as a JSON object.
 If specific values aren't mentioned (e.g., just "spending limit"), represent that appropriately (e.g., `"spending_limit": "unspecified"` or `null`).
-If no rules can be extracted, return an empty JSON object `{}`.
+If no rules can be extracted, return an empty JSON object `{{}}`.
 Return ONLY the JSON object itself, with no other text before or after it.
 Example Input: 'Max transaction $200. Block merchants: alcohol, tobacco. Allow autonomous purchases up to $50'
 Example Output:
 ```json
-{
+{{
   "max_transaction_amount": 200,
   "blocked_merchant_categories": ["alcohol", "tobacco"],
   "autonomous_purchase_limit": 50
-}
+}}
 ```
 """
 
