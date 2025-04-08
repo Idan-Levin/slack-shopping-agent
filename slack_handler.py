@@ -746,20 +746,20 @@ Use `/list-reminders` to see all scheduled reminders.
 
     # --- New Command: /set-mandate ---
     @app.command("/set-mandate")
-    async def handle_set_mandate(ack: AsyncAck, body: dict, client: AsyncWebClient, logger_from_context):
+    async def handle_set_mandate(ack: AsyncAck, body: dict, client: AsyncWebClient, logger):
         """Handles the /set-mandate command to open a modal for setting global rules."""
         await ack()
 
         user_id = body.get("user_id")
-        channel_id = body.get("channel_id") # For ephemeral messages
+        channel_id = body.get("channel_id") # For ephemeral messages and passing to modal
 
         if not user_id:
-            logger_from_context.error("Could not identify user in /set-mandate command.")
+            logger.error("Could not identify user in /set-mandate command.")
             # Attempt to send ephemeral message even without channel_id, might fail
             try:
                 await client.chat_postEphemeral(channel=channel_id or user_id, user=user_id, text="Error: Could not identify the user.")
             except Exception:
-                 logger_from_context.error("Failed to send ephemeral error message for missing user ID.")
+                 logger.error("Failed to send ephemeral error message for missing user ID.")
             return
 
         # --- Admin Check ---
@@ -773,10 +773,10 @@ Use `/list-reminders` to see all scheduled reminders.
                     user=user_id,
                     text="Sorry, only workspace admins can set mandate rules."
                 )
-                logger_from_context.warning(f"Non-admin user {user_id} attempted to use /set-mandate")
+                logger.warning(f"Non-admin user {user_id} attempted to use /set-mandate")
                 return
         except Exception as e:
-            logger_from_context.error(f"Error checking admin status for /set-mandate: {e}")
+            logger.error(f"Error checking admin status for /set-mandate: {e}")
             await client.chat_postEphemeral(
                 channel=channel_id,
                 user=user_id,
@@ -792,6 +792,7 @@ Use `/list-reminders` to see all scheduled reminders.
                 view={
                     "type": "modal",
                     "callback_id": "set_mandate_modal", # Important for the submission handler
+                    "private_metadata": channel_id or '', # Pass channel_id here
                     "title": {"type": "plain_text", "text": "Set Global Mandate Rules"},
                     "submit": {"type": "plain_text", "text": "Submit Rules"},
                     "close": {"type": "plain_text", "text": "Cancel"},
@@ -823,9 +824,9 @@ Use `/list-reminders` to see all scheduled reminders.
                     ]
                 }
             )
-            logger_from_context.info(f"Opened set_mandate modal for admin user {user_id}")
+            logger.info(f"Opened set_mandate modal for admin user {user_id}")
         except Exception as e:
-            logger_from_context.error(f"Failed to open set_mandate modal: {e}", exc_info=True)
+            logger.error(f"Failed to open set_mandate modal: {e}", exc_info=True)
             await client.chat_postEphemeral(
                 channel=channel_id,
                 user=user_id,
@@ -837,15 +838,18 @@ Use `/list-reminders` to see all scheduled reminders.
     @app.view("set_mandate_modal")
     async def handle_set_mandate_submission(ack: AsyncAck, body: dict, client: AsyncWebClient, view: dict, logger, respond: Respond):
         """Handles the submission of the set_mandate modal."""
-        await ack() # Acknowledge the submission immediately
+        # Ensure ack() is called first!
+        await ack()
 
         user_id = body["user"]["id"]
         # Extract the submitted value
         submitted_values = view["state"]["values"]
         mandate_rules_text = submitted_values["mandate_rules_block"]["mandate_rules_input"]["value"]
+        # Extract original channel_id from private_metadata
+        original_channel_id = view.get("private_metadata")
 
         # --- Mock Processing ---
-        logger.info(f"Received mandate rules submission from user {user_id}:")
+        logger.info(f"Received mandate rules submission from user {user_id} (Original Channel: {original_channel_id})")
         logger.info(f"Rules:\n{mandate_rules_text}")
 
         # In a real implementation, you would parse these rules, validate them,
@@ -853,15 +857,104 @@ Use `/list-reminders` to see all scheduled reminders.
         # For now, just confirm receipt.
         # --- End Mock Processing ---
 
-        # Send an ephemeral confirmation message back to the user
-        try:
-             # Use respond() for ephemeral messages in view submissions
-             await respond(text=f"✅ Mandate rules received (mock implementation). You entered:\n```\n{mandate_rules_text}\n```", response_type="ephemeral")
-             logger.info(f"Sent mandate submission confirmation to user {user_id}")
-        except Exception as e:
-             logger.error(f"Failed to send ephemeral confirmation for mandate submission: {e}", exc_info=True)
-             # You might want a fallback or just log the error
+        # --- Send Ephemeral Confirmation using client.chat_postEphemeral ---
+        confirmation_text = f"✅ Mandate rules received (mock implementation). You entered:\n```\n{mandate_rules_text}\n```"
+        if original_channel_id:
+            try:
+                 await client.chat_postEphemeral(
+                     channel=original_channel_id,
+                     user=user_id,
+                     text=confirmation_text
+                 )
+                 logger.info(f"Sent mandate submission confirmation to user {user_id} in channel {original_channel_id}")
+            except Exception as e:
+                 logger.error(f"Failed to send ephemeral confirmation to original channel {original_channel_id}: {e}", exc_info=True)
+                 # Fallback: Try sending a DM if channel post failed
+                 try:
+                     await client.chat_postEphemeral(channel=user_id, user=user_id, text=confirmation_text + "\n(Could not post to original channel)")
+                     logger.info(f"Sent mandate submission confirmation as DM to user {user_id}")
+                 except Exception as dm_e:
+                     logger.error(f"Failed to send fallback DM confirmation: {dm_e}", exc_info=True)
+        else:
+            # If no original_channel_id, try sending as DM
+            logger.warning(f"No original_channel_id found in private_metadata for mandate submission from user {user_id}. Attempting DM.")
+            try:
+                await client.chat_postEphemeral(channel=user_id, user=user_id, text=confirmation_text)
+                logger.info(f"Sent mandate submission confirmation as DM to user {user_id}")
+            except Exception as dm_e:
+                logger.error(f"Failed to send DM confirmation (no channel_id): {dm_e}", exc_info=True)
 
     # --- End View Submission Handler ---
+
+    # --- New Command: /view-mandate ---
+    @app.command("/view-mandate")
+    async def handle_view_mandate(ack: AsyncAck, body: dict, client: AsyncWebClient, logger):
+        """Handles the /view-mandate command to display the currently set global mandate rules."""
+        await ack()
+
+        user_id = body.get("user_id")
+        channel_id = body.get("channel_id") # For ephemeral messages
+
+        if not user_id:
+            logger.error("Could not identify user in /view-mandate command.")
+            # Attempt to send ephemeral message
+            try:
+                await client.chat_postEphemeral(channel=channel_id or user_id, user=user_id, text="Error: Could not identify the user.")
+            except Exception:
+                 logger.error("Failed to send ephemeral error message for missing user ID in /view-mandate.")
+            return
+
+        # --- Admin Check ---
+        try:
+            user_info = await client.users_info(user=user_id)
+            is_admin = user_info.get("user", {}).get("is_admin", False)
+
+            if not is_admin:
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="Sorry, only workspace admins can view mandate rules."
+                )
+                logger.warning(f"Non-admin user {user_id} attempted to use /view-mandate")
+                return
+        except Exception as e:
+            logger.error(f"Error checking admin status for /view-mandate: {e}")
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Error checking admin permissions. Please try again later."
+            )
+            return
+        # --- End Admin Check ---
+
+        # --- Retrieve and Display Mandate (Placeholder) ---
+        try:
+            # TODO: Replace this with actual logic to retrieve saved mandate rules
+            # from a database or configuration file.
+            current_mandate_rules = "*Placeholder:* Mandate storage is not yet implemented."
+            
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f"📄 *Current Global Mandate Rules:*
+
+```
+{current_mandate_rules}
+```
+
+Use `/set-mandate` to define or update these rules."
+            )
+            logger.info(f"Displayed placeholder mandate rules to admin user {user_id}")
+
+        except Exception as e:
+            logger.error(f"Error retrieving/displaying mandate rules: {e}", exc_info=True)
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Sorry, I encountered an error trying to display the mandate rules."
+            )
+        # --- End Retrieve and Display ---
+
+    # --- End /view-mandate Command ---
 
     # ... existing @app.command("/delete-reminder") handler ...
