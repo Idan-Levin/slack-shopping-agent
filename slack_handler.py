@@ -936,13 +936,13 @@ Use `/list-reminders` to see all scheduled reminders.
             await client.chat_postEphemeral(
                 channel=channel_id,
                 user=user_id,
-                text=f"📄 *Current Global Mandate Rules:*
+                text=f"""📄 *Current Global Mandate Rules:*
 
 ```
 {current_mandate_rules}
 ```
 
-Use `/set-mandate` to define or update these rules."
+Use `/set-mandate` to define or update these rules."""
             )
             logger.info(f"Displayed placeholder mandate rules to admin user {user_id}")
 
