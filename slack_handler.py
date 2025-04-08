@@ -7,6 +7,7 @@ from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
 from slack_bolt.context.say.async_say import AsyncSay
 from slack_bolt.context.ack.async_ack import AsyncAck # Import AsyncAck
+from slack_bolt.context.respond import Respond # Import Respond for ephemeral messages in view submissions
 from datetime import datetime, timedelta
 
 # Assuming agent_executor.py is in the same directory
@@ -742,3 +743,125 @@ Use `/list-reminders` to see all scheduled reminders.
                 user=user_id,
                 text=f"Error listing reminders: {str(e)}"
             )
+
+    # --- New Command: /set-mandate ---
+    @app.command("/set-mandate")
+    async def handle_set_mandate(ack: AsyncAck, body: dict, client: AsyncWebClient, logger_from_context):
+        """Handles the /set-mandate command to open a modal for setting global rules."""
+        await ack()
+
+        user_id = body.get("user_id")
+        channel_id = body.get("channel_id") # For ephemeral messages
+
+        if not user_id:
+            logger_from_context.error("Could not identify user in /set-mandate command.")
+            # Attempt to send ephemeral message even without channel_id, might fail
+            try:
+                await client.chat_postEphemeral(channel=channel_id or user_id, user=user_id, text="Error: Could not identify the user.")
+            except Exception:
+                 logger_from_context.error("Failed to send ephemeral error message for missing user ID.")
+            return
+
+        # --- Admin Check ---
+        try:
+            user_info = await client.users_info(user=user_id)
+            is_admin = user_info.get("user", {}).get("is_admin", False)
+
+            if not is_admin:
+                await client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text="Sorry, only workspace admins can set mandate rules."
+                )
+                logger_from_context.warning(f"Non-admin user {user_id} attempted to use /set-mandate")
+                return
+        except Exception as e:
+            logger_from_context.error(f"Error checking admin status for /set-mandate: {e}")
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Error checking admin permissions. Please try again later."
+            )
+            return
+        # --- End Admin Check ---
+
+        # --- Open Modal ---
+        try:
+            await client.views_open(
+                trigger_id=body["trigger_id"],
+                view={
+                    "type": "modal",
+                    "callback_id": "set_mandate_modal", # Important for the submission handler
+                    "title": {"type": "plain_text", "text": "Set Global Mandate Rules"},
+                    "submit": {"type": "plain_text", "text": "Submit Rules"},
+                    "close": {"type": "plain_text", "text": "Cancel"},
+                    "blocks": [
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": "Enter global mandate rules below. Use natural language (e.g., _'Spending limit $500 per transaction, block purchases from gambling sites.'_)"
+                            }
+                        },
+                        {
+                            "type": "input",
+                            "block_id": "mandate_rules_block", # ID for the block
+                            "element": {
+                                "type": "plain_text_input",
+                                "action_id": "mandate_rules_input", # ID for the input element
+                                "multiline": True,
+                                "placeholder": {
+                                    "type": "plain_text",
+                                    "text": "e.g., Max transaction $200\nBlock merchants: alcohol, tobacco\nAllow autonomous purchases up to $50"
+                                }
+                            },
+                            "label": {
+                                "type": "plain_text",
+                                "text": "Mandate Rules (Free Text)"
+                            }
+                        }
+                    ]
+                }
+            )
+            logger_from_context.info(f"Opened set_mandate modal for admin user {user_id}")
+        except Exception as e:
+            logger_from_context.error(f"Failed to open set_mandate modal: {e}", exc_info=True)
+            await client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="Sorry, I couldn't open the mandate settings modal. Please try again."
+            )
+    # --- End /set-mandate Command ---
+
+    # --- New View Submission Handler ---
+    @app.view("set_mandate_modal")
+    async def handle_set_mandate_submission(ack: AsyncAck, body: dict, client: AsyncWebClient, view: dict, logger_from_context, respond: Respond):
+        """Handles the submission of the set_mandate modal."""
+        await ack() # Acknowledge the submission immediately
+
+        user_id = body["user"]["id"]
+        # Extract the submitted value
+        submitted_values = view["state"]["values"]
+        mandate_rules_text = submitted_values["mandate_rules_block"]["mandate_rules_input"]["value"]
+
+        # --- Mock Processing ---
+        logger_from_context.info(f"Received mandate rules submission from user {user_id}:")
+        logger_from_context.info(f"Rules:\n{mandate_rules_text}")
+
+        # In a real implementation, you would parse these rules, validate them,
+        # potentially use an LLM to structure them, and store them persistently.
+        # For now, just confirm receipt.
+        # --- End Mock Processing ---
+
+        # Send an ephemeral confirmation message back to the user
+        try:
+             # Use respond() for ephemeral messages in view submissions
+             await respond(text=f"✅ Mandate rules received (mock implementation). You entered:\n```\n{mandate_rules_text}\n```", response_type="ephemeral")
+             logger_from_context.info(f"Sent mandate submission confirmation to user {user_id}")
+        except Exception as e:
+             logger_from_context.error(f"Failed to send ephemeral confirmation for mandate submission: {e}", exc_info=True)
+             # You might want a fallback or just log the error
+
+    # --- End View Submission Handler ---
+
+    # ... existing @app.command("/delete-reminder") handler ...
