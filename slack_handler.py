@@ -835,7 +835,7 @@ Use `/list-reminders` to see all scheduled reminders.
 
     # --- New View Submission Handler ---
     @app.view("set_mandate_modal")
-    async def handle_set_mandate_submission(ack: AsyncAck, body: dict, client: AsyncWebClient, view: dict, logger_from_context, respond: Respond):
+    async def handle_set_mandate_submission(ack: AsyncAck, body: dict, client: AsyncWebClient, view: dict, logger, respond: Respond):
         """Handles the submission of the set_mandate modal."""
         await ack() # Acknowledge the submission immediately
 
@@ -845,8 +845,8 @@ Use `/list-reminders` to see all scheduled reminders.
         mandate_rules_text = submitted_values["mandate_rules_block"]["mandate_rules_input"]["value"]
 
         # --- Mock Processing ---
-        logger_from_context.info(f"Received mandate rules submission from user {user_id}:")
-        logger_from_context.info(f"Rules:\n{mandate_rules_text}")
+        logger.info(f"Received mandate rules submission from user {user_id}:")
+        logger.info(f"Rules:\n{mandate_rules_text}")
 
         # In a real implementation, you would parse these rules, validate them,
         # potentially use an LLM to structure them, and store them persistently.
@@ -857,9 +857,9 @@ Use `/list-reminders` to see all scheduled reminders.
         try:
              # Use respond() for ephemeral messages in view submissions
              await respond(text=f"✅ Mandate rules received (mock implementation). You entered:\n```\n{mandate_rules_text}\n```", response_type="ephemeral")
-             logger_from_context.info(f"Sent mandate submission confirmation to user {user_id}")
+             logger.info(f"Sent mandate submission confirmation to user {user_id}")
         except Exception as e:
-             logger_from_context.error(f"Failed to send ephemeral confirmation for mandate submission: {e}", exc_info=True)
+             logger.error(f"Failed to send ephemeral confirmation for mandate submission: {e}", exc_info=True)
              # You might want a fallback or just log the error
 
     # --- End View Submission Handler ---
