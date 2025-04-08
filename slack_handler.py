@@ -222,7 +222,7 @@ def register_listeners(app: AsyncApp):
 
             # Format payload for the Target Automation Agent
             items_payload = [
-                {"name": item['product_title'], "quantity": item['quantity']}
+                {"product_title": item['product_title'], "quantity": item['quantity']}
                 for item in items if item.get('product_title') # Ensure title exists
             ]
 
