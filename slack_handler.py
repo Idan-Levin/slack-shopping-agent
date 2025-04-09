@@ -794,7 +794,7 @@ Use `/list-reminders` to see all scheduled reminders.
                     "type": "modal",
                     "callback_id": "set_mandate_modal", # Important for the submission handler
                     "private_metadata": channel_id or '', # Pass channel_id here
-                    "title": {"type": "plain_text", "text": "Set Global Mandate Rules"},
+                    "title": {"type": "plain_text", "text": "Set Agent Payment Mandate Scope"},
                     "submit": {"type": "plain_text", "text": "Submit Rules"},
                     "close": {"type": "plain_text", "text": "Cancel"},
                     "blocks": [
@@ -802,7 +802,7 @@ Use `/list-reminders` to see all scheduled reminders.
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": "Enter global mandate rules below. Use natural language (e.g., _'Spending limit $500 per transaction, block purchases from gambling sites.'_)"
+                                "text": "Enter the rules for the agent's payment permissions here. Use natural language"
                             }
                         },
                         {
@@ -814,7 +814,7 @@ Use `/list-reminders` to see all scheduled reminders.
                                 "multiline": True,
                                 "placeholder": {
                                     "type": "plain_text",
-                                    "text": "e.g., Max transaction $200\nBlock merchants: alcohol, tobacco\nAllow autonomous purchases up to $50"
+                                    "text": "e.g., Max transaction amount $200\nAllow purchases from specific merchants: Target, Amazon, OfficeDepot\nRequire specific approval for transactions over $100"
                                 }
                             },
                             "label": {
