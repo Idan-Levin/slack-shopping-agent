@@ -745,22 +745,20 @@ Use `/list-reminders` to see all scheduled reminders.
                 text=f"Error listing reminders: {str(e)}"
             )
 
-    # --- New Command: /set-mandate ---
+    # --- New: /set-mandate Command ---
     @app.command("/set-mandate")
     async def handle_set_mandate(ack: AsyncAck, body: dict, client: AsyncWebClient, logger):
-        """Handles the /set-mandate command to open a modal for setting global rules."""
-        await ack()
-
+        """Handles the /set-mandate command to open a modal for setting global mandate rules."""
+        await ack() # Acknowledge the command immediately
+        
         user_id = body.get("user_id")
-        channel_id = body.get("channel_id") # For ephemeral messages and passing to modal
+        channel_id = body.get("channel_id") # Used for sending ephemeral messages
 
+        logger.info(f"Received /set-mandate command from user {user_id} in channel {channel_id}")
+        logger.info(f"Request body keys: {list(body.keys())}")
+        
         if not user_id:
             logger.error("Could not identify user in /set-mandate command.")
-            # Attempt to send ephemeral message even without channel_id, might fail
-            try:
-                await client.chat_postEphemeral(channel=channel_id or user_id, user=user_id, text="Error: Could not identify the user.")
-            except Exception:
-                 logger.error("Failed to send ephemeral error message for missing user ID.")
             return
 
         # --- Admin Check ---
@@ -788,13 +786,14 @@ Use `/list-reminders` to see all scheduled reminders.
 
         # --- Open Modal ---
         try:
+            logger.info(f"Attempting to open set_mandate modal for user {user_id}")
             await client.views_open(
                 trigger_id=body["trigger_id"],
                 view={
                     "type": "modal",
                     "callback_id": "set_mandate_modal", # Important for the submission handler
                     "private_metadata": channel_id or '', # Pass channel_id here
-                    "title": {"type": "plain_text", "text": "Set Agent Payment Mandate Scope"},
+                    "title": {"type": "plain_text", "text": "Set Global Mandate Rules"},
                     "submit": {"type": "plain_text", "text": "Submit Rules"},
                     "close": {"type": "plain_text", "text": "Cancel"},
                     "blocks": [
@@ -802,7 +801,7 @@ Use `/list-reminders` to see all scheduled reminders.
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
-                                "text": "Enter the rules for the agent's payment permissions here. Use natural language"
+                                "text": "Enter global mandate rules below. Use natural language (e.g., _'Spending limit $500 per transaction, block purchases from gambling sites.'_)"
                             }
                         },
                         {
@@ -814,7 +813,7 @@ Use `/list-reminders` to see all scheduled reminders.
                                 "multiline": True,
                                 "placeholder": {
                                     "type": "plain_text",
-                                    "text": "e.g., Max transaction amount $200\nAllow purchases from specific merchants: Target, Amazon, OfficeDepot\nRequire specific approval for transactions over $100"
+                                    "text": "e.g., Max transaction $200\nBlock merchants: alcohol, tobacco\nAllow autonomous purchases up to $50"
                                 }
                             },
                             "label": {
@@ -827,11 +826,16 @@ Use `/list-reminders` to see all scheduled reminders.
             )
             logger.info(f"Opened set_mandate modal for admin user {user_id}")
         except Exception as e:
-            logger.error(f"Failed to open set_mandate modal: {e}", exc_info=True)
+            logger.error(f"Failed to open set_mandate modal: {str(e)}", exc_info=True)
+            # Log more details about the error
+            if hasattr(e, 'response') and hasattr(e.response, 'data'):
+                logger.error(f"API Response: {e.response.data}")
+            if 'trigger_id' in body:
+                logger.info(f"Trigger ID: {body['trigger_id']}")
             await client.chat_postEphemeral(
                 channel=channel_id,
                 user=user_id,
-                text="Sorry, I couldn't open the mandate settings modal. Please try again."
+                text=f"Sorry, I couldn't open the mandate settings modal. Error: {str(e)}"
             )
     # --- End /set-mandate Command ---
 
