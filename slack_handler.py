@@ -793,7 +793,7 @@ Use `/list-reminders` to see all scheduled reminders.
                     "type": "modal",
                     "callback_id": "set_mandate_modal", # Important for the submission handler
                     "private_metadata": channel_id or '', # Pass channel_id here
-                    "title": {"type": "plain_text", "text": "Set Agent Payment Mandate Scope"},
+                    "title": {"type": "plain_text", "text": "Agent Payment Mandate"}, # Shortened title
                     "submit": {"type": "plain_text", "text": "Submit Rules"},
                     "close": {"type": "plain_text", "text": "Cancel"},
                     "blocks": [
@@ -813,7 +813,7 @@ Use `/list-reminders` to see all scheduled reminders.
                                 "multiline": True,
                                 "placeholder": {
                                     "type": "plain_text",
-                                    "text": "e.g., Max transaction amount $200\nAllow purchases from specific merchants: Target, Amazon, OfficeDepot\nRequire specific approval for transactions over $100"
+                                    "text": "e.g., Max transaction $200\nAllow: Target, Amazon\nRequire approval > $100" # Shortened placeholder
                                 }
                             },
                             "label": {
