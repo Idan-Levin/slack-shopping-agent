@@ -130,18 +130,21 @@ Rules might include:
 - Time-based restrictions
 - Restrictions on item types (e.g., no alcohol)
 - Settings for autonomous purchases (allowed up to a certain amount, etc.)
+- Expiry duration for the rules (e.g., 'expires in 30 days', 'valid for 1 week')
 
 Analyze the user's input text and represent the extracted rules as a JSON object.
+If a rule mentions an expiry, represent it in days in an `expiry_days` field.
 If specific values aren't mentioned (e.g., just "spending limit"), represent that appropriately (e.g., `"spending_limit": "unspecified"` or `null`).
 If no rules can be extracted, return an empty JSON object `{{}}`.
 Return ONLY the JSON object itself, with no other text before or after it.
-Example Input: 'Max transaction $200. Block merchants: alcohol, tobacco. Allow autonomous purchases up to $50'
+Example Input: 'Max transaction $200. Block merchants: alcohol, tobacco. Allow autonomous purchases up to $50. Expires in 30 days.'
 Example Output:
 ```json
 {{
   "max_transaction_amount": 200,
   "blocked_merchant_categories": ["alcohol", "tobacco"],
-  "autonomous_purchase_limit": 50
+  "autonomous_purchase_limit": 50,
+  "expiry_days": 30
 }}
 ```
 """

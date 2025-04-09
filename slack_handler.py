@@ -813,7 +813,7 @@ Use `/list-reminders` to see all scheduled reminders.
                                 "multiline": True,
                                 "placeholder": {
                                     "type": "plain_text",
-                                    "text": "e.g., Max transaction $200\nAllow: Target, Amazon\nRequire approval > $100" # Shortened placeholder
+                                    "text": "e.g., Max transaction $200\nAllow: Target, Amazon\nRequire approval > $100\nExpires in 30 days" # Added expiry example, still within limits
                                 }
                             },
                             "label": {
@@ -890,8 +890,6 @@ Use `/list-reminders` to see all scheduled reminders.
             # Format the JSON object nicely for display
             formatted_json = json.dumps(parsed_mandate_object, indent=2)
             confirmation_text = f"✅ Mandate rules processed. Here is the structured mandate object:\n```json\n{formatted_json}\n```"
-            # Add note about storage being mocked
-            confirmation_text += "\n\n_(Note: Mandate storage is not yet implemented. This object is not saved.)_"
         else:
             # Fallback if something unexpected happened
             confirmation_text = "⚠️ Could not process mandate rules. Please check logs or try again."
